@@ -1,0 +1,18 @@
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "ark-class-hub-api",
+  "main": "src/index.ts",
+  "account_id": "26d1e756e9375f14b9aaefc8d5cc6ed5",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "routes": [
+    { "pattern": "arkapi.macrostar.top", "custom_domain": true }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ark",
+      "database_id": "e898b602-f68c-42f7-834b-e589b81d28c3"
+    }
+  ]
+}

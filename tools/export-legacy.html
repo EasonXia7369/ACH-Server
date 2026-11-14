@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>旧考勤数据导出（迁移工具）</title>
+<style>
+  body{font-family:"Microsoft YaHei","PingFang SC",sans-serif;background:#f2f5fa;color:#1f2937;margin:0;display:grid;place-items:center;min-height:100vh}
+  .box{width:min(480px,92vw);background:#fff;border:1px solid #e5e9f2;border-radius:14px;box-shadow:0 8px 24px -12px rgba(16,24,40,.18);padding:24px}
+  h1{font-size:18px;margin:0 0 8px}
+  p{font-size:13px;color:#6b7280;line-height:1.7;margin:0 0 16px}
+  input{width:100%;box-sizing:border-box;font-size:16px;padding:12px;border:1px solid #e5e9f2;border-radius:10px;letter-spacing:2px;text-align:center;text-transform:uppercase}
+  button{width:100%;margin-top:14px;padding:12px;font-size:15px;font-weight:700;border:none;border-radius:10px;background:#3b5bdb;color:#fff;cursor:pointer}
+  button:disabled{opacity:.6}
+  #log{margin-top:14px;font-size:12.5px;color:#6b7280;white-space:pre-wrap;line-height:1.8}
+  .err{color:#c81e1e}
+  .ok{color:#0f9d76;font-weight:700}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>旧考勤数据导出</h1>
+  <p>输入旧「班级考勤工作台」的 6 位同步码，从云端拉取全部数据（名单、考勤、作业、布置、日志），导出为 JSON 文件。<br>导出后在新系统「管理后台 → 导入旧系统数据」中导入。</p>
+  <input id="code" placeholder="同步码（如 K7M3XA）" maxlength="12">
+  <button id="go" onclick="run()">开始导出</button>
+  <div id="log"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"></script>
+<script>
+/* 名单与拼音映射照抄自旧版 index.html，用于把云端 sid（s1~s53）还原成姓名 */
+const NAMES = ["白天","陈邦睿","段鸿煊","方骏豪","顾俊豪","华紫晴","黄宇涵","黄子墨","江智杰","柯一筱",
+"李晨","李浩然","李泓臻","李可","李睿","李思琦","李文博","李欣汝","李豫","李远浩",
+"林诗雅","刘芊梦","刘子轩","陆铮","罗可浔","罗猛猛","吕瑞熙","吕莹","马海玲","马铭泽",
+"马雨霏","明梦菲","宁晨雅","盛世博","石沐希","万子涵","吴广睿","吴思彤","夏子涵","项文浩",
+"熊晓波","熊心蕊","徐俊洁","闫亮","杨涵麟","杨炎华","杨宇熙","叶淳幸","占子琪","周涵宇",
+"周瑾","邹子涵"];
+const PY = {'白':'B','陈':'C','段':'D','方':'F','顾':'G','华':'H','黄':'H','江':'J','柯':'K',
+'李':'L','林':'L','刘':'L','陆':'L','罗':'L','吕':'L','马':'M','明':'M','宁':'N','盛':'S',
+'石':'S','万':'W','吴':'W','夏':'X','项':'X','熊':'X','徐':'X','闫':'Y','杨':'Y','叶':'Y',
+'占':'Z','周':'Z','邹':'Z'};
+
+const CLOUD = {
+  endpoint: 'https://class-attendance-62885.app.workbuddy.host',
+  publishableKey: 'wbpk_toN1lFfn5IoqlfhN0mBHE0_Hnqe62yBukOAnDYOdf1O5ManMfTs4bZr',
+  oauthRelayBaseUrl: 'https://www.workbuddy.cn/v2/as/genie-baas/oauth'
+};
+
+function log(msg, cls) {
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="${cls || ''}">${msg}</div>`;
+}
+
+async function run() {
+  const code = document.getElementById('code').value.trim().toUpperCase();
+  const btn = document.getElementById('go');
+  if (!code) { log('请输入同步码', 'err'); return; }
+  btn.disabled = true;
+  document.getElementById('log').innerHTML = '';
+  try {
+    log('连接云端…');
+    const cloud = await window.WorkBuddyCloud.createWorkBuddyCloud(CLOUD);
+    const dba = cloud.database;
+
+    log('拉取 class_settings …');
+    const settings = (await dba.from('class_settings').select('class_name,pass_hash,student_pass_hash,subjects').eq('class_code', code)).data?.[0] || null;
+
+    log('拉取 attendance_days …');
+    const attendance = (await dba.from('attendance_days').select('day,payload,updated_at').eq('class_code', code)).data || [];
+
+    log('拉取 homework_records …');
+    const hwRecords = (await dba.from('homework_records').select('day,subject,title,missing,deleted,updated_at').eq('class_code', code)).data || [];
+
+    log('拉取 homework_tasks …');
+    const hwTasks = (await dba.from('homework_tasks').select('day,subject,content,deleted,updated_at').eq('class_code', code)).data || [];
+
+    log('拉取 change_logs …');
+    const logs = (await dba.from('change_logs').select('ts,usr,action,detail').eq('class_code', code)).data || [];
+
+    const days = attendance.map(a => a.day).length;
+    log(`考勤 ${days} 天，作业记录 ${hwRecords.length} 条，作业布置 ${hwTasks.length} 条，日志 ${logs.length} 条`);
+
+    const out = {
+      app: 'ark-legacy-export',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      syncCode: code,
+      names: NAMES,
+      py: PY,
+      settings,
+      attendance,
+      hwRecords,
+      hwTasks,
+      logs
+    };
+
+    const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    const clsName = settings?.class_name || code;
+    a.href = URL.createObjectURL(blob);
+    a.download = `旧考勤数据_${clsName}_${code}.json`;
+    a.click();
+    log('✔ 导出完成，文件已下载', 'ok');
+  } catch (e) {
+    log('导出失败：' + (e?.message || e), 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
