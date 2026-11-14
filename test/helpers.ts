@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import Database from 'better-sqlite3'
 import { createApp } from '../src/index.js'
 
@@ -65,14 +65,26 @@ export interface TestCtx {
     payload?: any
     headers?: Record<string, string>
   }) => Promise<InjectResult>
+  /** 原始二进制请求（媒体上传用），返回 Response */
+  rawRequest: (
+    method: string,
+    url: string,
+    headers: Record<string, string>,
+    body?: ArrayBuffer | Uint8Array,
+  ) => Promise<Response>
   /** 直接查询内存库（与 better-sqlite3 同步接口） */
   db: Database.Database
 }
 
-/** 创建独立的测试上下文：内存库 + 迁移 + Hono app。每个测试文件一个，互不影响。 */
+/** 创建独立的测试上下文：内存库 + 全部迁移 + Hono app。每个测试文件一个，互不影响。 */
 export function createTestCtx(bootstrapCode = 'TESTBOOT'): TestCtx {
   const db = new Database(':memory:')
-  db.exec(readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'))
+  for (const f of readdirSync(new URL('../migrations', import.meta.url)).sort()) {
+    if (f.endsWith('.sql')) {
+      db.exec(readFileSync(new URL(`../migrations/${f}`, import.meta.url), 'utf8'))
+    }
+  }
+  // 测试环境没有 CHAT DO 绑定：消息路由需容忍其缺失（跳过广播）
   const env = { DB: createD1Shim(db), ARK_BOOTSTRAP_CODE: bootstrapCode }
   const app = createApp()
 
@@ -97,5 +109,16 @@ export function createTestCtx(bootstrapCode = 'TESTBOOT'): TestCtx {
     return { statusCode: res.status, json: () => data }
   }
 
-  return { inject, db }
+  const rawRequest = async (
+    method: string,
+    url: string,
+    headers: Record<string, string>,
+    body?: ArrayBuffer | Uint8Array,
+  ): Promise<Response> => {
+    const init: RequestInit = { method, headers }
+    if (body !== undefined) init.body = body as any
+    return app.request(url, init, env as any)
+  }
+
+  return { inject, rawRequest, db }
 }

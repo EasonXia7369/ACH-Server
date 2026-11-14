@@ -14,5 +14,13 @@
       "database_name": "ark",
       "database_id": "e898b602-f68c-42f7-834b-e589b81d28c3"
     }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "CHAT", "class_name": "ClassChatDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ClassChatDO"] }
   ]
 }

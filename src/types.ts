@@ -1,5 +1,7 @@
 export interface Env {
   DB: D1Database
+  /** 班级聊天 DO（测试环境缺失，消息路由需容忍其缺失） */
+  CHAT?: DurableObjectNamespace
   ARK_BOOTSTRAP_CODE?: string
 }
 

@@ -10,6 +10,7 @@ import { auditRoutes } from './routes/audit.js'
 import { homeworkRoutes } from './routes/homework.js'
 import { dutyRoutes } from './routes/duty.js'
 import { kioskRoutes } from './routes/kiosk.js'
+import { messageRoutes } from './routes/messages.js'
 
 /** 允许的前端来源：生产 Pages 域名 + 本地 Vite 开发服务器 */
 const ALLOWED_ORIGINS = ['https://ach.macrostar.top', 'http://localhost:5173']
@@ -38,6 +39,7 @@ export function createApp() {
   app.route('/', homeworkRoutes)
   app.route('/', dutyRoutes)
   app.route('/', kioskRoutes)
+  app.route('/', messageRoutes)
 
   app.notFound((c) => c.json({ error: '接口不存在' }, 404))
 
@@ -51,3 +53,6 @@ export default {
     return app.fetch(request, env, ctx)
   },
 }
+
+// wrangler 要求 DO 类从 main 导出
+export { ClassChatDO } from './chat-do.js'
