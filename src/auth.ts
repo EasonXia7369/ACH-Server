@@ -93,6 +93,27 @@ export function bearerToken(c: Context<AppContext>): string {
   return (c.req.header('Authorization') ?? '').replace(/^Bearer\s+/i, '')
 }
 
+/** 令牌 → 会话用户（或 null）。供 WS/媒体等非标鉴权场景复用。 */
+export async function sessionFromToken(
+  db: D1Database,
+  token: string,
+): Promise<SessionUser | null> {
+  if (!token) return null
+  const row = await db
+    .prepare(
+      `SELECT s.kind, s.class_id, s.expires_at, u.id AS uid, u.role, u.name
+       FROM sessions s LEFT JOIN users u ON u.id = s.user_id
+       WHERE s.token = ?1`,
+    )
+    .bind(token)
+    .first<any>()
+  if (!row) return null
+  if (new Date(row.expires_at).getTime() < Date.now()) return null
+  return row.kind === 'student'
+    ? { userId: 0, role: 'student', name: '学生', classId: row.class_id }
+    : { userId: row.uid, role: row.role, name: row.name }
+}
+
 declare module 'hono' {
   interface ContextVariableMap {
     user?: SessionUser

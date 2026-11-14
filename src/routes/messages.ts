@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import type { AppContext } from '../types.js'
-import { authenticate } from '../auth.js'
+import { authenticate, bearerToken, sessionFromToken } from '../auth.js'
 
 export const messageRoutes = new Hono<AppContext>()
 
@@ -170,14 +170,22 @@ messageRoutes.post(
   },
 )
 
-/** 媒体取回（鉴权转发，不做公开直链）。 */
+/** 媒体取回（鉴权转发，不做公开直链）。支持 Authorization 头或 ?token=（img/audio 标签场景）。 */
 messageRoutes.get(
   '/api/classes/:id/messages/media/:msgId',
-  authenticate,
   async (c) => {
     const classId = Number(c.req.param('id'))
-    const sender = await resolveSender(c, classId)
-    if (!sender) return c.json({ error: '无权访问该班级消息' }, 403)
+    const token = bearerToken(c) || c.req.query('token') || ''
+    const user = await sessionFromToken(c.env.DB, token)
+    if (!user) return c.json({ error: '未登录' }, 401)
+    const allowed =
+      user.role === 'student'
+        ? user.classId === classId
+        : !!(await c.env.DB
+            .prepare('SELECT 1 AS ok FROM classes WHERE id = ?1 AND teacher_id = ?2')
+            .bind(classId, user.userId)
+            .first())
+    if (!allowed) return c.json({ error: '无权访问该班级消息' }, 403)
     const msgId = Number(c.req.param('msgId'))
     const row = await c.env.DB.prepare(
       'SELECT media, media_mime FROM messages WHERE id = ?1 AND class_id = ?2',
