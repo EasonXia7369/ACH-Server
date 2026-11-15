@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import type { AppContext } from '../types.js'
 import { authenticate, bearerToken, sessionFromToken } from '../auth.js'
+import { broadcast } from '../realtime.js'
 
 export const messageRoutes = new Hono<AppContext>()
 
@@ -31,24 +32,6 @@ async function resolveSender(
   return null
 }
 
-function chatStub(c: any, classId: number): DurableObjectStub | null {
-  if (!c.env.CHAT) return null
-  const id = c.env.CHAT.idFromName(`class-chat:${classId}`)
-  return c.env.CHAT.get(id)
-}
-
-async function broadcast(c: any, classId: number, payload: unknown): Promise<void> {
-  const stub = chatStub(c, classId)
-  if (!stub) return
-  try {
-    await stub.fetch('https://do/broadcast', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
-  } catch {
-    // 广播失败不影响消息落库；客户端有 after 增量兜底
-  }
-}
 
 /** 历史 / 增量：?after=<最后见过的 id>，返回该 id 之后的消息（不含 BLOB）。 */
 messageRoutes.get(
@@ -107,7 +90,7 @@ messageRoutes.post(
       media_duration_ms: null,
       created_at: created?.created_at ?? new Date().toISOString(),
     }
-    await broadcast(c, classId, { type: 'message', message })
+    await broadcast(c.env, classId, { type: 'message', message })
     return c.json({ message })
   },
 )
@@ -166,7 +149,7 @@ messageRoutes.post(
       media_duration_ms: kind === 'voice' ? durationRaw : null,
       created_at: created?.created_at ?? new Date().toISOString(),
     }
-    await broadcast(c, classId, { type: 'message', message })
+    await broadcast(c.env, classId, { type: 'message', message })
     return c.json({ message })
   },
 )

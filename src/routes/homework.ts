@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { AppContext } from '../types.js'
 import { authenticate, requireRole } from '../auth.js'
 import { audit } from '../audit.js'
+import { broadcastRefresh } from '../realtime.js'
 
 export const homeworkRoutes = new Hono<AppContext>()
 
@@ -96,6 +97,7 @@ homeworkRoutes.put(
         `${day} ${subj} 未交 ${missing.length} 人${missing.length ? '：' + names.slice(0, 8).join('、') : ''}`,
       ),
     ])
+    await broadcastRefresh(c.env, classId, 'records', day)
     return c.json({ ok: true })
   },
 )
@@ -118,6 +120,7 @@ homeworkRoutes.delete(
         .bind(classId, day, new Date().toISOString(), subject.trim()),
       audit(c.env.DB, classId, 'teacher', user.userId, '删除作业记录', `${day} ${subject}`),
     ])
+    await broadcastRefresh(c.env, classId, 'records', day)
     return c.json({ ok: true })
   },
 )
@@ -194,6 +197,7 @@ homeworkRoutes.put(
         .bind(classId, day, subj, text, now),
       audit(c.env.DB, classId, actor, user.userId || null, actorLabel, `${day} ${subj}：${text.slice(0, 40)}`),
     ])
+    await broadcastRefresh(c.env, classId, 'tasks', day)
     return c.json({ ok: true })
   },
 )

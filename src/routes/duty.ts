@@ -3,6 +3,7 @@ import dayjs from 'dayjs'
 import type { AppContext } from '../types.js'
 import { authenticate, requireRole } from '../auth.js'
 import { audit } from '../audit.js'
+import { broadcastRefresh } from '../realtime.js'
 
 export const dutyRoutes = new Hono<AppContext>()
 
