@@ -1,6 +1,6 @@
 # Ark Class Hub · Server（后端 API）
 
-方舟班级中心的后端：Hono on Cloudflare Workers + D1（边缘 SQLite）。配合前端仓库 [`Ark-Class-Hub-Web`](https://github.com/EasonXia7369/Ark-Class-Hub-Web) 使用。
+方舟班级中心的后端：Hono on Cloudflare Workers + D1（边缘 SQLite）。配合前端仓库 [`Ark-Class-Hub-Web`](https://github.com/EasonXia7369/ArkClassHub-Web) 使用。
 
 - API 地址：https://arkapi.macrostar.top（push 到 main 自动部署）
 - CORS 白名单：`https://ark.macrostar.top`（生产）、`http://localhost:5173`（开发）
