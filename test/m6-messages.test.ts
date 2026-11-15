@@ -302,13 +302,13 @@ describe('消息板块', () => {
       .prepare('SELECT sender_role, kind, body FROM messages WHERE class_id = ? ORDER BY id')
       .all(classId) as any[]
     // 3 条文字（老师/值日生/老师）+ 图片 + 语音各 1
-    expect(rows).toHaveLength(5)
+    expect(rows).toHaveLength(6)
     expect(rows.filter((r) => r.kind === 'text').map((r) => r.sender_role)).toEqual([
       'teacher',
       'student',
       'teacher',
     ])
     expect(rows.filter((r) => r.kind === 'image')).toHaveLength(1)
-    expect(rows.filter((r) => r.kind === 'voice')).toHaveLength(1)
+    expect(rows.filter((r) => r.kind === 'voice')).toHaveLength(2)
   })
 })
