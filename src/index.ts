@@ -30,6 +30,15 @@ export function createApp() {
   )
 
   app.get('/api/health', (c) => c.json({ ok: true, ts: new Date().toISOString() }))
+
+  // 未捕获异常 → 记入可观测性日志，前端仍拿到统一的 500 JSON
+  app.onError((err, c) => {
+    console.error(
+      `[${c.req.method}] ${c.req.path} → ${err instanceof Error ? err.stack : String(err)}`,
+    )
+    return c.json({ error: '服务器内部错误' }, 500)
+  })
+
   app.route('/', authRoutes)
   app.route('/', classRoutes)
   app.route('/', adminRoutes)
