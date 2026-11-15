@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { AppContext } from '../types.js'
-import { authenticate, bearerToken, sessionFromToken } from '../auth.js'
-import { broadcast } from '../realtime.js'
+import { authenticate, bearerToken, canAccessClass, sessionFromToken } from '../auth.js'
+import { broadcast, broadcastRefresh } from '../realtime.js'
 
 export const messageRoutes = new Hono<AppContext>()
 
@@ -57,16 +57,16 @@ messageRoutes.get(
     const limit = Math.min(Number(c.req.query('limit') ?? 100), 300)
     const rows = (
       await c.env.DB.prepare(
-        `SELECT m.id, m.class_id, m.sender_role, m.kind, m.body, m.media_mime, m.media_duration_ms, m.created_at,
+        `SELECT m.id, m.class_id, m.sender_role, m.kind, m.body, m.media_mime, m.media_duration_ms, m.created_at, m.popup,
                 (m.media IS NOT NULL) AS has_media,
                 COALESCE(st.name, CASE WHEN m.sender_role = 'student' THEN '值日生' ELSE '老师' END) AS sender_name, m.actor_student_id
          FROM messages m
          LEFT JOIN students st ON st.id = m.actor_student_id
-         WHERE m.class_id = ?1 AND m.id > ?2 ORDER BY m.id ASC LIMIT ?3`,
+         WHERE m.class_id = ?1 AND m.id > ?2 AND m.deleted = 0 ORDER BY m.id ASC LIMIT ?3`,
       )
         .bind(classId, after, limit)
         .all<any>()
-    ).results
+    ).results.map((r) => ({ ...r, popup: !!r.popup }))
     return c.json({ messages: rows })
   },
 )
@@ -79,10 +79,15 @@ messageRoutes.post(
     const classId = Number(c.req.param('id'))
     const sender = await resolveSender(c, classId)
     if (!sender) return c.json({ error: '无权在该班级发送消息' }, 403)
-    const { body, actor_student_id } = await c.req.json<{ body?: string; actor_student_id?: number }>()
+    const { body, actor_student_id, popup } = await c.req.json<{
+      body?: string
+      actor_student_id?: number
+      popup?: boolean
+    }>()
     const text = (body ?? '').trim()
     if (!text) return c.json({ error: '消息内容不能为空' }, 400)
     if (text.length > MAX_TEXT) return c.json({ error: '消息最长 500 字' }, 400)
+    const popupFlag = popup === false ? 0 : 1
 
     // 值日生可认领身份：校验学生属于本班，消息记到人
     let actorName: string | null = null
@@ -98,9 +103,9 @@ messageRoutes.post(
     }
 
     const ins = await c.env.DB.prepare(
-      `INSERT INTO messages (class_id, sender_role, actor_student_id, kind, body) VALUES (?1,?2,?3,'text',?4)`,
+      `INSERT INTO messages (class_id, sender_role, actor_student_id, kind, body, popup) VALUES (?1,?2,?3,'text',?4,?5)`,
     )
-      .bind(classId, sender.role, actorId, text)
+      .bind(classId, sender.role, actorId, text, popupFlag)
       .run()
     const id = ins.meta.last_row_id as number
     const created = await c.env.DB.prepare('SELECT created_at FROM messages WHERE id = ?')
@@ -115,6 +120,7 @@ messageRoutes.post(
       actor_student_id: actorId,
       kind: 'text' as const,
       body: text,
+      popup: popupFlag === 1,
       has_media: false,
       media_mime: null,
       media_duration_ms: null,
@@ -171,10 +177,19 @@ messageRoutes.post(
     }
 
     const ins = await c.env.DB.prepare(
-      `INSERT INTO messages (class_id, sender_role, actor_student_id, kind, body, media, media_mime, media_duration_ms)
-       VALUES (?1,?2,?3,?4,'',?5,?6,?7)`,
+      `INSERT INTO messages (class_id, sender_role, actor_student_id, kind, body, media, media_mime, media_duration_ms, popup)
+       VALUES (?1,?2,?3,?4,'',?5,?6,?7,?8)`,
     )
-      .bind(classId, sender.role, actorId, kind, buf, mime, kind === 'voice' ? durationRaw : null)
+      .bind(
+        classId,
+        sender.role,
+        actorId,
+        kind,
+        buf,
+        mime,
+        kind === 'voice' ? durationRaw : null,
+        c.req.query('popup') === '0' ? 0 : 1,
+      )
       .run()
     const id = ins.meta.last_row_id as number
     const created = await c.env.DB.prepare('SELECT created_at FROM messages WHERE id = ?')
@@ -189,6 +204,7 @@ messageRoutes.post(
       actor_student_id: actorId,
       kind,
       body: '',
+      popup: c.req.query('popup') !== '0',
       has_media: true,
       media_mime: mime,
       media_duration_ms: kind === 'voice' ? durationRaw : null,
@@ -196,6 +212,48 @@ messageRoutes.post(
     }
     await broadcast(c.env, classId, { type: 'message', message })
     return c.json({ message })
+  },
+)
+
+/** 删除消息（软删除）。发送者本人（按认领身份）或本班教师/管理员可删。 */
+messageRoutes.delete(
+  '/api/classes/:id/messages/:msgId',
+  authenticate,
+  async (c) => {
+    const classId = Number(c.req.param('id'))
+    const user = c.get('user')!
+    const msgId = Number(c.req.param('msgId'))
+    const row = await c.env.DB
+      .prepare('SELECT id, sender_role, actor_student_id FROM messages WHERE id = ?1 AND class_id = ?2')
+      .bind(msgId, classId)
+      .first<any>()
+    if (!row) return c.json({ error: '消息不存在' }, 404)
+
+    let allowed = false
+    if (user.role === 'admin') {
+      allowed = true
+    } else if (user.role === 'teacher') {
+      const ok = await c.env.DB
+        .prepare(
+          `SELECT 1 AS ok WHERE EXISTS (
+           SELECT 1 FROM classes WHERE id = ?1 AND teacher_id = ?2
+         ) OR EXISTS (
+           SELECT 1 FROM class_teachers WHERE class_id = ?1 AND user_id = ?2
+         )`,
+        )
+        .bind(classId, user.userId)
+        .first()
+      allowed = !!ok
+    } else if (user.role === 'student') {
+      // 学生只能删自己认领身份发的消息
+      allowed = user.classId === classId && row.sender_role === 'student' && row.actor_student_id !== null
+    }
+    if (!allowed) return c.json({ error: '无权删除该消息' }, 403)
+
+    await c.env.DB.prepare('UPDATE messages SET deleted = 1 WHERE id = ?').bind(msgId).run()
+    await broadcast(c.env, classId, { type: 'message-deleted', id: msgId })
+    await broadcastRefresh(c.env, classId, 'messages')
+    return c.json({ ok: true })
   },
 )
 

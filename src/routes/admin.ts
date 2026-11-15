@@ -51,6 +51,25 @@ adminRoutes.post('/api/admin/import-legacy', async (c) => {
 
 /* ---------- 账号管理 ---------- */
 
+/** 管理员直接创建教师账号（跳过邀请码，密码由管理员设置）。 */
+adminRoutes.post('/api/admin/users', async (c) => {
+  const { name, password } = await c.req.json<{ name?: string; password?: string }>()
+  if (!name?.trim() || !password) return c.json({ error: '姓名和密码必填' }, 400)
+  if (password.length < 4) return c.json({ error: '密码至少 4 位' }, 400)
+  const dup = await c.env.DB.prepare('SELECT 1 AS ok FROM users WHERE name = ?1')
+    .bind(name.trim())
+    .first()
+  if (dup) return c.json({ error: '该姓名已被使用' }, 400)
+  const ins = await c.env.DB
+    .prepare("INSERT INTO users (name, role, pass_hash) VALUES (?1,'teacher',?2)")
+    .bind(name.trim(), await hashPassword(password))
+    .run()
+  await audit(c.env.DB, null, 'admin', c.get('user')!.userId, '创建教师账号', name.trim()).run()
+  return c.json({
+    user: { id: ins.meta.last_row_id as number, name: name.trim(), role: 'teacher' },
+  })
+})
+
 adminRoutes.get('/api/admin/users', async (c) => {
   const users = (
     await c.env.DB.prepare(

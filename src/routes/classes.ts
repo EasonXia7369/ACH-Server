@@ -124,6 +124,47 @@ classRoutes.get('/api/classes/:id', ...reader, async (c) => {
   })
 })
 
+/** 快捷短语（班级级配置，消息板块使用）。 */
+classRoutes.get('/api/classes/:id/quick-phrases', ...reader, async (c) => {
+  const rows = (
+    await c.env.DB
+      .prepare('SELECT content FROM quick_phrases WHERE class_id = ?1 ORDER BY seq')
+      .bind(Number(c.req.param('id')))
+      .all<any>()
+  ).results
+  return c.json({ phrases: rows.map((r) => r.content) })
+})
+
+classRoutes.put('/api/classes/:id/quick-phrases', ...teacher, async (c) => {
+  const classId = Number(c.req.param('id'))
+  const { phrases } = await c.req.json<{ phrases?: string[] }>()
+  if (!Array.isArray(phrases)) return c.json({ error: 'phrases 必须为数组' }, 400)
+  const items = phrases.map((x) => x.trim().slice(0, 30)).filter(Boolean).slice(0, 20)
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM quick_phrases WHERE class_id = ?1').bind(classId),
+    ...items.map((content, i) =>
+      c.env.DB
+        .prepare('INSERT INTO quick_phrases (class_id, content, seq) VALUES (?1,?2,?3)')
+        .bind(classId, content, i),
+    ),
+  ])
+  return c.json({ phrases: items })
+})
+
+classRoutes.post('/api/classes/:id/parent-link', ...teacher, async (c) => {
+  const classId = Number(c.req.param('id'))
+  const gen = () => {
+    const bytes = new Uint8Array(24)
+    crypto.getRandomValues(bytes)
+    return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
+  }
+  let key = gen()
+  const dup = await c.env.DB.prepare('SELECT 1 AS ok FROM classes WHERE parent_key = ?1').bind(key).first()
+  if (dup) key = gen()
+  await c.env.DB.prepare('UPDATE classes SET parent_key = ?1 WHERE id = ?2').bind(key, classId).run()
+  return c.json({ key })
+})
+
 /** 班主任/管理员：可添加为本班协作教师的候选列表（全部教师）。 */
 classRoutes.get('/api/classes/:id/available-teachers', ...teacher, async (c) => {
   const classId = Number(c.req.param('id'))

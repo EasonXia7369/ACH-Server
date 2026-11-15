@@ -28,7 +28,7 @@ export async function broadcast(env: Env, classId: number, payload: unknown): Pr
 export async function broadcastRefresh(
   env: Env,
   classId: number,
-  scope: 'tasks' | 'records' | 'attendance' | 'duty' | 'leaves',
+  scope: 'tasks' | 'records' | 'attendance' | 'duty' | 'leaves' | 'messages',
   day?: string,
 ): Promise<void> {
   await broadcast(env, classId, { type: 'refresh', scope, day })
