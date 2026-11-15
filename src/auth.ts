@@ -161,8 +161,15 @@ export async function canAccessClass(
 ): Promise<boolean> {
   if (user.role === 'admin') return true
   if (user.role === 'student') return user.classId === classId
+  // 班主任或协作教师
   const row = await db
-    .prepare('SELECT 1 AS ok FROM classes WHERE id = ? AND teacher_id = ?')
+    .prepare(
+      `SELECT 1 AS ok WHERE EXISTS (
+         SELECT 1 FROM classes WHERE id = ?1 AND teacher_id = ?2
+       ) OR EXISTS (
+         SELECT 1 FROM class_teachers WHERE class_id = ?1 AND user_id = ?2
+       )`,
+    )
     .bind(classId, user.userId)
     .first()
   return !!row

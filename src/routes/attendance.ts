@@ -46,10 +46,21 @@ attendanceRoutes.put(
   async (c) => {
     const classId = Number(c.req.param('id'))
     const user = c.get('user')!
-    const { day, entries } = await c.req.json<{
+    const { day, entries, actor_student_id } = await c.req.json<{
       day?: string
       entries?: Array<{ student_id: number; slot: string; status: string; note?: string }>
+      actor_student_id?: number
     }>()
+    // 值日生认领身份：登记留痕到人
+    let actorName: string | null = null
+    if (user.role === 'student' && actor_student_id) {
+      const stu = await c.env.DB
+        .prepare('SELECT name FROM students WHERE id = ?1 AND class_id = ?2 AND active = 1')
+        .bind(actor_student_id, classId)
+        .first<{ name: string }>()
+      if (!stu) return c.json({ error: '认领的学生不属于该班级' }, 400)
+      actorName = stu.name
+    }
     if (!dateOf(day)) return c.json({ error: 'day 必须为 YYYY-MM-DD' }, 400)
     if (!Array.isArray(entries) || entries.length === 0) {
       return c.json({ error: 'entries 不能为空' }, 400)

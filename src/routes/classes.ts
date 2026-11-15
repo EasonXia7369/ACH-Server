@@ -52,7 +52,9 @@ classRoutes.get(
               `SELECT c.*, u.name AS teacher_name,
                       (SELECT COUNT(*) FROM students s WHERE s.class_id = c.id AND s.active = 1) AS student_count
                FROM classes c JOIN users u ON u.id = c.teacher_id
-               WHERE c.teacher_id = ?1 ORDER BY c.id`,
+               WHERE c.teacher_id = ?1
+                  OR EXISTS (SELECT 1 FROM class_teachers ct WHERE ct.class_id = c.id AND ct.user_id = ?1)
+               ORDER BY c.id`,
             )
               .bind(user.userId)
               .all<any>()
@@ -102,7 +104,91 @@ classRoutes.get('/api/classes/:id', ...reader, async (c) => {
       .bind(cls.id)
       .all<any>()
   ).results
-  return c.json({ class: { ...cls, subjects: JSON.parse(cls.subjects_json) }, students })
+  const teachers = (
+    await c.env.DB.prepare(
+      `SELECT u.id, u.name, u.role, 1 AS is_owner
+       FROM classes c JOIN users u ON u.id = c.teacher_id
+       WHERE c.id = ?1
+       UNION
+       SELECT u.id, u.name, u.role, 0 AS is_owner
+       FROM class_teachers ct JOIN users u ON u.id = ct.user_id
+       WHERE ct.class_id = ?1`,
+    )
+      .bind(cls.id)
+      .all<any>()
+  ).results
+  return c.json({
+    class: { ...cls, subjects: JSON.parse(cls.subjects_json) },
+    students,
+    teachers,
+  })
+})
+
+/** 班主任/管理员：可添加为本班协作教师的候选列表（全部教师）。 */
+classRoutes.get('/api/classes/:id/available-teachers', ...teacher, async (c) => {
+  const classId = Number(c.req.param('id'))
+  const rows = (
+    await c.env.DB.prepare(
+      `SELECT u.id, u.name FROM users u
+       WHERE u.role = 'teacher'
+         AND u.id != (SELECT teacher_id FROM classes WHERE id = ?1)
+         AND u.id NOT IN (SELECT user_id FROM class_teachers WHERE class_id = ?1)
+       ORDER BY u.name`,
+    )
+      .bind(classId)
+      .all<any>()
+  ).results
+  return c.json({ teachers: rows })
+})
+
+/** 添加协作教师。body: { user_id } */
+classRoutes.post('/api/classes/:id/teachers', ...teacher, async (c) => {
+  const classId = Number(c.req.param('id'))
+  const user = c.get('user')!
+  const { user_id } = await c.req.json<{ user_id?: number }>()
+  if (!user_id) return c.json({ error: 'user_id 必填' }, 400)
+  const target = await c.env.DB
+    .prepare("SELECT id, name FROM users WHERE id = ?1 AND role = 'teacher'")
+    .bind(user_id)
+    .first<any>()
+  if (!target) return c.json({ error: '目标账号不存在或不是教师' }, 400)
+  const owner = await c.env.DB.prepare('SELECT teacher_id FROM classes WHERE id = ?')
+    .bind(classId)
+    .first<any>()
+  if (owner?.teacher_id === user_id) return c.json({ error: '该教师已是本班班主任' }, 400)
+  try {
+    await c.env.DB
+      .prepare('INSERT INTO class_teachers (class_id, user_id) VALUES (?1,?2)')
+      .bind(classId, user_id)
+      .run()
+  } catch {
+    return c.json({ error: '该教师已是本班协作教师' }, 400)
+  }
+  const user2 = c.get('user')!
+  audit(c.env.DB, classId, user2.role, user2.userId || null, '添加协作教师', target.name).run()
+  return c.json({ ok: true })
+})
+
+/** 移除协作教师。body: { user_id }（仅班主任/管理员；不能移除班主任） */
+classRoutes.delete('/api/classes/:id/teachers/:uid', ...teacher, async (c) => {
+  const classId = Number(c.req.param('id'))
+  const uid = Number(c.req.param('uid'))
+  const user = c.get('user')!
+  const cls = await c.env.DB.prepare('SELECT teacher_id FROM classes WHERE id = ?')
+    .bind(classId)
+    .first<any>()
+  if (!cls) return c.json({ error: '班级不存在' }, 404)
+  if (cls.teacher_id === uid) return c.json({ error: '不能移除班主任（用班级转让）' }, 400)
+  // 权限收紧：非班主任的协作教师不能移除别人
+  if (user.role === 'teacher' && user.userId !== cls.teacher_id) {
+    return c.json({ error: '只有班主任可以移除协作教师' }, 403)
+  }
+  const target = await c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(uid).first<{ name: string }>()
+  await c.env.DB.prepare('DELETE FROM class_teachers WHERE class_id = ?1 AND user_id = ?2')
+    .bind(classId, uid)
+    .run()
+  audit(c.env.DB, classId, user.role, user.userId || null, '移除协作教师', target?.name ?? String(uid)).run()
+  return c.json({ ok: true })
 })
 
 classRoutes.post('/api/classes/:id/students', ...teacher, async (c) => {

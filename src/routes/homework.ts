@@ -57,11 +57,12 @@ homeworkRoutes.put(
   async (c) => {
     const classId = Number(c.req.param('id'))
     const user = c.get('user')!
-    const { day, subject, title, missing } = await c.req.json<{
+    const { day, subject, title, missing, actor_student_id } = await c.req.json<{
       day?: string
       subject?: string
       title?: string
       missing?: number[]
+      actor_student_id?: number
     }>()
     if (!dateOf(day)) return c.json({ error: 'day 必须为 YYYY-MM-DD' }, 400)
     const subj = (subject ?? '').trim().slice(0, 8)
@@ -76,6 +77,15 @@ homeworkRoutes.put(
       ),
     )
     const names = nameRows.map((r) => r?.name ?? '?')
+    let actorName = ''
+    if (user.role === 'student' && actor_student_id) {
+      const stu = await c.env.DB
+        .prepare('SELECT name FROM students WHERE id = ?1 AND class_id = ?2 AND active = 1')
+        .bind(actor_student_id, classId)
+        .first<{ name: string }>()
+      if (!stu) return c.json({ error: '认领的学生不属于该班级' }, 400)
+      actorName = stu.name
+    }
 
     const now = new Date().toISOString()
     await c.env.DB.batch([
@@ -93,7 +103,7 @@ homeworkRoutes.put(
         classId,
         user.role,
         user.userId || null,
-        user.role === 'student' ? '学生登记作业' : '作业未交登记',
+        user.role === 'student' ? (actorName ? actorName + ' 登记作业' : '学生登记作业') : '作业未交登记',
         `${day} ${subj} 未交 ${missing.length} 人${missing.length ? '：' + names.slice(0, 8).join('、') : ''}`,
       ),
     ])
@@ -159,10 +169,11 @@ homeworkRoutes.put(
   async (c) => {
     const classId = Number(c.req.param('id'))
     const user = c.get('user')!
-    const { day, subject, content } = await c.req.json<{
+    const { day, subject, content, actor_student_id } = await c.req.json<{
       day?: string
       subject?: string
       content?: string
+      actor_student_id?: number
     }>()
     if (!dateOf(day)) return c.json({ error: 'day 必须为 YYYY-MM-DD' }, 400)
     const subj = (subject ?? '').trim().slice(0, 8)
@@ -170,8 +181,17 @@ homeworkRoutes.put(
     const text = (content ?? '').slice(0, 500)
     const now = new Date().toISOString()
     const actor = user.role === 'student' ? 'student' : 'teacher'
-    const actorLabel = user.role === 'student' ? '学生布置作业' : '布置作业'
-    const clearLabel = user.role === 'student' ? '学生清空作业布置' : '清空作业布置'
+    let actorName = ''
+    if (user.role === 'student' && actor_student_id) {
+      const stu = await c.env.DB
+        .prepare('SELECT name FROM students WHERE id = ?1 AND class_id = ?2 AND active = 1')
+        .bind(actor_student_id, classId)
+        .first<{ name: string }>()
+      if (!stu) return c.json({ error: '认领的学生不属于该班级' }, 400)
+      actorName = stu.name
+    }
+    const actorLabel = `${actorName ? actorName + ' ' : ''}${user.role === 'student' ? '（学生）布置作业' : '布置作业'}`
+    const clearLabel = `${actorName ? actorName + ' ' : ''}${user.role === 'student' ? '（学生）清空作业布置' : '清空作业布置'}`
 
     if (!text) {
       // 内容为空 = 清空该科

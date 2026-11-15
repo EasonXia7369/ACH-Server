@@ -81,11 +81,12 @@ leaveRoutes.post(
   async (c) => {
     const classId = Number(c.req.param('id'))
     const user = c.get('user')!
-    const { student_id, from_day, to_day, reason } = await c.req.json<{
+    const { student_id, from_day, to_day, reason, actor_student_id } = await c.req.json<{
       student_id?: number
       from_day?: string
       to_day?: string
       reason?: string
+      actor_student_id?: number
     }>()
     if (!student_id || !dateOf(from_day) || !dateOf(to_day)) {
       return c.json({ error: '学生、起止日期必填（YYYY-MM-DD）' }, 400)

@@ -24,7 +24,13 @@ async function resolveSender(
   }
   if (user.role === 'teacher') {
     const ok = await c.env.DB
-      .prepare('SELECT 1 AS ok FROM classes WHERE id = ?1 AND teacher_id = ?2')
+      .prepare(
+        `SELECT 1 AS ok WHERE EXISTS (
+         SELECT 1 FROM classes WHERE id = ?1 AND teacher_id = ?2
+       ) OR EXISTS (
+         SELECT 1 FROM class_teachers WHERE class_id = ?1 AND user_id = ?2
+       )`,
+      )
       .bind(classId, user.userId)
       .first()
     return ok ? { role: 'teacher', userId: user.userId } : null
@@ -51,9 +57,12 @@ messageRoutes.get(
     const limit = Math.min(Number(c.req.query('limit') ?? 100), 300)
     const rows = (
       await c.env.DB.prepare(
-        `SELECT id, class_id, sender_role, kind, body, media_mime, media_duration_ms, created_at,
-                (media IS NOT NULL) AS has_media
-         FROM messages WHERE class_id = ?1 AND id > ?2 ORDER BY id ASC LIMIT ?3`,
+        `SELECT m.id, m.class_id, m.sender_role, m.kind, m.body, m.media_mime, m.media_duration_ms, m.created_at,
+                (m.media IS NOT NULL) AS has_media,
+                COALESCE(st.name, CASE WHEN m.sender_role = 'student' THEN '值日生' ELSE '老师' END) AS sender_name, m.actor_student_id
+         FROM messages m
+         LEFT JOIN students st ON st.id = m.actor_student_id
+         WHERE m.class_id = ?1 AND m.id > ?2 ORDER BY m.id ASC LIMIT ?3`,
       )
         .bind(classId, after, limit)
         .all<any>()
@@ -70,15 +79,28 @@ messageRoutes.post(
     const classId = Number(c.req.param('id'))
     const sender = await resolveSender(c, classId)
     if (!sender) return c.json({ error: '无权在该班级发送消息' }, 403)
-    const { body } = await c.req.json<{ body?: string }>()
+    const { body, actor_student_id } = await c.req.json<{ body?: string; actor_student_id?: number }>()
     const text = (body ?? '').trim()
     if (!text) return c.json({ error: '消息内容不能为空' }, 400)
     if (text.length > MAX_TEXT) return c.json({ error: '消息最长 500 字' }, 400)
 
+    // 值日生可认领身份：校验学生属于本班，消息记到人
+    let actorName: string | null = null
+    let actorId: number | null = null
+    if (sender.role === 'student' && actor_student_id) {
+      const stu = await c.env.DB
+        .prepare('SELECT name FROM students WHERE id = ?1 AND class_id = ?2 AND active = 1')
+        .bind(actor_student_id, classId)
+        .first<{ name: string }>()
+      if (!stu) return c.json({ error: '认领的学生不属于该班级' }, 400)
+      actorName = stu.name
+      actorId = actor_student_id
+    }
+
     const ins = await c.env.DB.prepare(
-      `INSERT INTO messages (class_id, sender_role, kind, body) VALUES (?1,?2,'text',?3)`,
+      `INSERT INTO messages (class_id, sender_role, actor_student_id, kind, body) VALUES (?1,?2,?3,'text',?4)`,
     )
-      .bind(classId, sender.role, text)
+      .bind(classId, sender.role, actorId, text)
       .run()
     const id = ins.meta.last_row_id as number
     const created = await c.env.DB.prepare('SELECT created_at FROM messages WHERE id = ?')
@@ -89,6 +111,8 @@ messageRoutes.post(
       id,
       class_id: classId,
       sender_role: sender.role,
+      sender_name: actorName ?? (sender.role === 'student' ? '值日生' : '老师'),
+      actor_student_id: actorId,
       kind: 'text' as const,
       body: text,
       has_media: false,
@@ -113,9 +137,22 @@ messageRoutes.post(
     const sender = await resolveSender(c, classId)
     if (!sender) return c.json({ error: '无权在该班级发送消息' }, 403)
 
+    // 媒体上传是二进制 body：认领身份走 query 参数
+    const actor_student_id = Number(c.req.query('actor') ?? 0) || undefined
     const kind = c.req.query('kind')
     if (kind !== 'image' && kind !== 'voice') {
       return c.json({ error: 'kind 必须为 image 或 voice' }, 400)
+    }
+    let actorName: string | null = null
+    let actorId: number | null = null
+    if (sender.role === 'student' && actor_student_id) {
+      const stu = await c.env.DB
+        .prepare('SELECT name FROM students WHERE id = ?1 AND class_id = ?2 AND active = 1')
+        .bind(actor_student_id, classId)
+        .first<{ name: string }>()
+      if (!stu) return c.json({ error: '认领的学生不属于该班级' }, 400)
+      actorName = stu.name
+      actorId = actor_student_id
     }
     // 归一化：去掉 ;codecs=xxx 等附加段（浏览器录音常为 audio/webm;codecs=opus）
     const mime = (c.req.query('mime') ?? '').split(';')[0].trim().toLowerCase()
@@ -134,10 +171,10 @@ messageRoutes.post(
     }
 
     const ins = await c.env.DB.prepare(
-      `INSERT INTO messages (class_id, sender_role, kind, body, media, media_mime, media_duration_ms)
-       VALUES (?1,?2,?3,'',?4,?5,?6)`,
+      `INSERT INTO messages (class_id, sender_role, actor_student_id, kind, body, media, media_mime, media_duration_ms)
+       VALUES (?1,?2,?3,?4,'',?5,?6,?7)`,
     )
-      .bind(classId, sender.role, kind, buf, mime, kind === 'voice' ? durationRaw : null)
+      .bind(classId, sender.role, actorId, kind, buf, mime, kind === 'voice' ? durationRaw : null)
       .run()
     const id = ins.meta.last_row_id as number
     const created = await c.env.DB.prepare('SELECT created_at FROM messages WHERE id = ?')
@@ -148,6 +185,8 @@ messageRoutes.post(
       id,
       class_id: classId,
       sender_role: sender.role,
+      sender_name: actorName ?? (sender.role === 'student' ? '值日生' : '老师'),
+      actor_student_id: actorId,
       kind,
       body: '',
       has_media: true,
