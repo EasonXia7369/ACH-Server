@@ -123,14 +123,14 @@ describe('M4 作业与值日', () => {
     })
     expect(read.json().tasks).toEqual([{ day: '2026-11-13', subject: '语文', content: '背诵课文第 3 段' }])
 
-    // 学生不能布置作业
-    const noPerm = await inject({
+    // 学生（值日生）可布置作业，审计记为 student
+    const stuPut = await inject({
       method: 'PUT',
       url: `/api/classes/${classId}/hw-tasks`,
       payload: { day: '2026-11-13', subject: '语文', content: 'x' },
       headers: { authorization: `Bearer ${kioskToken}` },
     })
-    expect(noPerm.statusCode).toBe(403)
+    expect(stuPut.statusCode).toBe(200)
 
     const clear = await inject({
       method: 'PUT',

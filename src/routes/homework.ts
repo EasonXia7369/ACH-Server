@@ -151,7 +151,8 @@ homeworkRoutes.get(
 homeworkRoutes.put(
   '/api/classes/:id/hw-tasks',
   authenticate,
-  requireRole('teacher', 'admin'),
+  // 值日生是老师的助手：作业布置权限等同老师，操作按角色留痕
+  requireRole('teacher', 'admin', 'student'),
   async (c) => {
     const classId = Number(c.req.param('id'))
     const user = c.get('user')!
@@ -165,6 +166,9 @@ homeworkRoutes.put(
     if (!subj) return c.json({ error: '科目必填' }, 400)
     const text = (content ?? '').slice(0, 500)
     const now = new Date().toISOString()
+    const actor = user.role === 'student' ? 'student' : 'teacher'
+    const actorLabel = user.role === 'student' ? '学生布置作业' : '布置作业'
+    const clearLabel = user.role === 'student' ? '学生清空作业布置' : '清空作业布置'
 
     if (!text) {
       // 内容为空 = 清空该科
@@ -175,7 +179,7 @@ homeworkRoutes.put(
              WHERE class_id = ?1 AND day = ?2 AND subject = ?4`,
           )
           .bind(classId, day, now, subj),
-        audit(c.env.DB, classId, 'teacher', user.userId, '清空作业布置', `${day} ${subj}`),
+        audit(c.env.DB, classId, actor, user.userId || null, clearLabel, `${day} ${subj}`),
       ])
       return c.json({ ok: true, cleared: true })
     }
@@ -188,7 +192,7 @@ homeworkRoutes.put(
            DO UPDATE SET content = excluded.content, deleted = 0, updated_at = excluded.updated_at`,
         )
         .bind(classId, day, subj, text, now),
-      audit(c.env.DB, classId, 'teacher', user.userId, '布置作业', `${day} ${subj}：${text.slice(0, 40)}`),
+      audit(c.env.DB, classId, actor, user.userId || null, actorLabel, `${day} ${subj}：${text.slice(0, 40)}`),
     ])
     return c.json({ ok: true })
   },
