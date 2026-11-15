@@ -257,6 +257,28 @@ describe('消息板块', () => {
     expect(fetchMedia.headers.get('Content-Type')).toBe('audio/webm')
   })
 
+  it('MIME 带 codecs 后缀被归一化接受（浏览器录音场景）', async () => {
+    const audio = new Uint8Array([9, 9])
+    const upload = await rawRequest(
+      'POST',
+      `/api/classes/${classId}/messages/upload?kind=voice&mime=audio/webm;codecs=opus&duration=3000`,
+      { authorization: `Bearer ${teacherToken}`, 'Content-Type': 'application/octet-stream' },
+      audio,
+    )
+    expect(upload.status).toBe(200)
+    const body: any = await upload.json()
+    expect(body.message.media_mime).toBe('audio/webm')
+  })
+
+  it('历史消息包含 class_id（图片地址依赖）', async () => {
+    const all = await inject({
+      method: 'GET',
+      url: `/api/classes/${classId}/messages`,
+      headers: { authorization: `Bearer ${teacherToken}` },
+    })
+    expect(all.json().messages.every((m: any) => m.class_id === classId)).toBe(true)
+  })
+
   it('语音缺时长 / 非法时长被拒绝', async () => {
     const res = await inject({
       method: 'POST',

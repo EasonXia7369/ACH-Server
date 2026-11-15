@@ -62,7 +62,7 @@ messageRoutes.get(
     const limit = Math.min(Number(c.req.query('limit') ?? 100), 300)
     const rows = (
       await c.env.DB.prepare(
-        `SELECT id, sender_role, kind, body, media_mime, media_duration_ms, created_at,
+        `SELECT id, class_id, sender_role, kind, body, media_mime, media_duration_ms, created_at,
                 (media IS NOT NULL) AS has_media
          FROM messages WHERE class_id = ?1 AND id > ?2 ORDER BY id ASC LIMIT ?3`,
       )
@@ -128,7 +128,8 @@ messageRoutes.post(
     if (kind !== 'image' && kind !== 'voice') {
       return c.json({ error: 'kind 必须为 image 或 voice' }, 400)
     }
-    const mime = c.req.query('mime') ?? ''
+    // 归一化：去掉 ;codecs=xxx 等附加段（浏览器录音常为 audio/webm;codecs=opus）
+    const mime = (c.req.query('mime') ?? '').split(';')[0].trim().toLowerCase()
     if (!ALLOWED_MIME.includes(mime)) {
       return c.json({ error: `不支持的媒体类型 ${mime}` }, 400)
     }
