@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import type { AppContext } from '../types.js'
-import { authenticate, genCode, requireRole } from '../auth.js'
+import { authenticate, genCode, hashPassword, requireRole } from '../auth.js'
 import { audit } from '../audit.js'
 import { importLegacy } from '../import-legacy.js'
 
@@ -47,4 +47,64 @@ adminRoutes.post('/api/admin/import-legacy', async (c) => {
   } catch (err: any) {
     return c.json({ error: err.message ?? '导入失败' }, 400)
   }
+})
+
+/* ---------- 账号管理 ---------- */
+
+adminRoutes.get('/api/admin/users', async (c) => {
+  const users = (
+    await c.env.DB.prepare(
+      `SELECT u.id, u.name, u.role, u.created_at,
+              (SELECT COUNT(*) FROM classes c WHERE c.teacher_id = u.id) AS class_count
+       FROM users u ORDER BY u.id`,
+    ).all<any>()
+  ).results
+  return c.json({ users })
+})
+
+/** 管理员重置任意账号密码（新密码由管理员提供）。 */
+adminRoutes.post('/api/admin/users/:id/reset-password', async (c) => {
+  const uid = Number(c.req.param('id'))
+  const admin = c.get('user')!
+  const { password } = await c.req.json<{ password?: string }>()
+  if (!password || password.length < 4) return c.json({ error: '密码至少 4 位' }, 400)
+  const user = await c.env.DB.prepare('SELECT id, name, role FROM users WHERE id = ?')
+    .bind(uid)
+    .first<any>()
+  if (!user) return c.json({ error: '账号不存在' }, 404)
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE users SET pass_hash = ? WHERE id = ?').bind(await hashPassword(password), uid),
+    // 强制该账号所有会话下线
+    c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(uid),
+  ])
+  await audit(c.env.DB, null, 'admin', admin.userId, '重置密码', `${user.name}（${user.role}）`).run()
+  return c.json({ ok: true })
+})
+
+/** 班级转让给另一位班主任。body: { teacher_id } */
+adminRoutes.post('/api/admin/classes/:id/transfer', async (c) => {
+  const classId = Number(c.req.param('id'))
+  const admin = c.get('user')!
+  const { teacher_id } = await c.req.json<{ teacher_id?: number }>()
+  if (!teacher_id) return c.json({ error: 'teacher_id 必填' }, 400)
+  const cls = await c.env.DB.prepare('SELECT id, name, teacher_id FROM classes WHERE id = ?')
+    .bind(classId)
+    .first<any>()
+  if (!cls) return c.json({ error: '班级不存在' }, 404)
+  const target = await c.env.DB.prepare("SELECT id, name, role FROM users WHERE id = ?1 AND role = 'teacher'")
+    .bind(teacher_id)
+    .first<any>()
+  if (!target) return c.json({ error: '目标账号不存在或不是教师' }, 400)
+  if (cls.teacher_id === teacher_id) return c.json({ error: '该班已属于这位教师' }, 400)
+  const old = await c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(cls.teacher_id).first<{ name: string }>()
+  await c.env.DB.prepare('UPDATE classes SET teacher_id = ? WHERE id = ?').bind(teacher_id, classId).run()
+  await audit(
+    c.env.DB,
+    classId,
+    'admin',
+    admin.userId,
+    '班级转让',
+    `${cls.name}：${old?.name ?? cls.teacher_id} → ${target.name}`,
+  ).run()
+  return c.json({ ok: true })
 })

@@ -13,7 +13,7 @@ function dateOf(v?: string | null): string | null {
   return v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null
 }
 
-/** 会话 → 广播身份（值日生统一为 student）。 */
+/** 会话 → 广播身份（值日生统一为 student；管理员以老师身份参与）。 */
 async function resolveSender(
   c: any,
   classId: number,
@@ -26,6 +26,12 @@ async function resolveSender(
     const ok = await c.env.DB
       .prepare('SELECT 1 AS ok FROM classes WHERE id = ?1 AND teacher_id = ?2')
       .bind(classId, user.userId)
+      .first()
+    return ok ? { role: 'teacher', userId: user.userId } : null
+  }
+  if (user.role === 'admin') {
+    const ok = await c.env.DB.prepare('SELECT 1 AS ok FROM classes WHERE id = ?1')
+      .bind(classId)
       .first()
     return ok ? { role: 'teacher', userId: user.userId } : null
   }

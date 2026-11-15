@@ -8,6 +8,7 @@ import {
   requireRole,
   verifyPassword,
 } from '../auth.js'
+import { audit } from '../audit.js'
 
 export const classRoutes = new Hono<AppContext>()
 
@@ -120,6 +121,71 @@ classRoutes.post('/api/classes/:id/students', ...teacher, async (c) => {
     .bind(ins.meta.last_row_id as number)
     .first()
   return c.json({ student: stu })
+})
+
+/** 批量导入名单：跳过班内已有的同名学生，学号顺延。body: { students: [{ name, pinyin_initial? }] } */
+classRoutes.post('/api/classes/:id/students/bulk', ...teacher, async (c) => {
+  const classId = Number(c.req.param('id'))
+  const { students } = await c.req.json<{
+    students?: Array<{ name?: string; pinyin_initial?: string }>
+  }>()
+  if (!Array.isArray(students) || students.length === 0) {
+    return c.json({ error: '名单不能为空' }, 400)
+  }
+  if (students.length > 300) return c.json({ error: '单次最多导入 300 人' }, 400)
+
+  const existingRows = (
+    await c.env.DB.prepare('SELECT name FROM students WHERE class_id = ?1').bind(classId).all<any>()
+  ).results
+  const existing = new Set(existingRows.map((r) => r.name))
+  const max = await c.env.DB
+    .prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM students WHERE class_id = ?')
+    .bind(classId)
+    .first<{ m: number }>()
+
+  const seen = new Set<string>()
+  const skipped: string[] = []
+  const toAdd: Array<{ name: string; initial: string }> = []
+  for (const s of students) {
+    const name = (s?.name ?? '').trim().slice(0, 20)
+    if (!name) continue
+    if (existing.has(name) || seen.has(name)) {
+      skipped.push(name)
+      continue
+    }
+    seen.add(name)
+    toAdd.push({
+      name,
+      initial: (s?.pinyin_initial ?? name.charAt(0)).toUpperCase(),
+    })
+  }
+
+  if (toAdd.length) {
+    let seq = max?.m ?? 0
+    await c.env.DB.batch(
+      toAdd.map((t) =>
+        c.env.DB
+          .prepare('INSERT INTO students (class_id, name, seq, pinyin_initial) VALUES (?,?,?,?)')
+          .bind(classId, t.name, ++seq, t.initial),
+      ),
+    )
+  }
+
+  audit(
+    c.env.DB,
+    classId,
+    'teacher',
+    c.get('user')!.userId,
+    '批量导入名单',
+    `新增 ${toAdd.length} 人${skipped.length ? `，跳过重复 ${skipped.length} 人` : ''}`,
+  ).run()
+
+  return c.json({
+    added: toAdd.length,
+    added_names: toAdd.map((t) => t.name),
+    skipped,
+    total: existing.size + toAdd.length,
+  })
 })
 
 classRoutes.put('/api/classes/:id/students/:sid', ...teacher, async (c) => {
