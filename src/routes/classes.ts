@@ -151,6 +151,42 @@ classRoutes.put('/api/classes/:id/quick-phrases', ...teacher, async (c) => {
   return c.json({ phrases: items })
 })
 
+/** 每日寄语来源配置（内置诗词 / 一言接口，一言可指定分类与最大长度）。 */
+const HITOKOTO_CATS = new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'])
+
+classRoutes.get('/api/classes/:id/quote-config', ...reader, async (c) => {
+  const cls = await c.env.DB
+    .prepare('SELECT quote_config FROM classes WHERE id = ?')
+    .bind(Number(c.req.param('id')))
+    .first<any>()
+  if (!cls) return c.json({ error: '班级不存在' }, 404)
+  return c.json({ config: cls.quote_config ? JSON.parse(cls.quote_config) : { source: 'builtin' } })
+})
+
+classRoutes.put('/api/classes/:id/quote-config', ...teacher, async (c) => {
+  const classId = Number(c.req.param('id'))
+  const { source, cats, max_length } = await c.req.json<{
+    source?: string
+    cats?: string[]
+    max_length?: number
+  }>()
+  if (source !== 'builtin' && source !== 'hitokoto') {
+    return c.json({ error: 'source 只能是 builtin 或 hitokoto' }, 400)
+  }
+  let config: Record<string, unknown> = { source }
+  if (source === 'hitokoto') {
+    const picked = Array.isArray(cats) ? cats.filter((x) => HITOKOTO_CATS.has(x)) : []
+    if (!picked.length) return c.json({ error: '至少选择一个句子分类' }, 400)
+    const maxLen = Math.min(100, Math.max(10, Number(max_length) || 30))
+    config = { source, cats: picked, max_length: maxLen }
+  }
+  await c.env.DB
+    .prepare('UPDATE classes SET quote_config = ? WHERE id = ?')
+    .bind(JSON.stringify(config), classId)
+    .run()
+  return c.json({ config })
+})
+
 classRoutes.post('/api/classes/:id/parent-link', ...teacher, async (c) => {
   const classId = Number(c.req.param('id'))
   const gen = () => {

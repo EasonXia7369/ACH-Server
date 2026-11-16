@@ -117,8 +117,59 @@ describe('消息弹出开关/删除 + 快捷短语 + 家长链接 + 创建教师
     expect(del.statusCode).toBe(403)
   })
 
-  it('快捷短语：默认空 → 配置 → 读取', async () => {
-    const empty = await inject({
+  it('寄语配置：默认内置 → 一言（含校验）→ 回内置', async () => {
+    const def = await inject({
+      method: 'GET',
+      url: `/api/classes/${classId}/quote-config`,
+      headers: { authorization: `Bearer ${teacherToken}` },
+    })
+    expect(def.json().config).toEqual({ source: 'builtin' })
+
+    const badSource = await inject({
+      method: 'PUT',
+      url: `/api/classes/${classId}/quote-config`,
+      payload: { source: 'gpt' },
+      headers: { authorization: `Bearer ${teacherToken}` },
+    })
+    expect(badSource.statusCode).toBe(400)
+
+    const badCats = await inject({
+      method: 'PUT',
+      url: `/api/classes/${classId}/quote-config`,
+      payload: { source: 'hitokoto', cats: ['x', 'z'] },
+      headers: { authorization: `Bearer ${teacherToken}` },
+    })
+    expect(badCats.statusCode).toBe(400)
+
+    const put = await inject({
+      method: 'PUT',
+      url: `/api/classes/${classId}/quote-config`,
+      payload: { source: 'hitokoto', cats: ['i', 'd'], max_length: 40 },
+      headers: { authorization: `Bearer ${teacherToken}` },
+    })
+    expect(put.statusCode).toBe(200)
+    expect(put.json().config).toEqual({ source: 'hitokoto', cats: ['i', 'd'], max_length: 40 })
+
+    // 学生令牌可读不可写
+    const stuPut = await inject({
+      method: 'PUT',
+      url: `/api/classes/${classId}/quote-config`,
+      payload: { source: 'builtin' },
+      headers: { authorization: `Bearer ${kioskToken}` },
+    })
+    expect(stuPut.statusCode).toBe(403)
+
+    const back = await inject({
+      method: 'PUT',
+      url: `/api/classes/${classId}/quote-config`,
+      payload: { source: 'builtin' },
+      headers: { authorization: `Bearer ${teacherToken}` },
+    })
+    expect(back.statusCode).toBe(200)
+    expect(back.json().config).toEqual({ source: 'builtin' })
+  })
+
+  it('快捷短语：默认空 → 配置 → 读取', async () => {    const empty = await inject({
       method: 'GET',
       url: `/api/classes/${classId}/quick-phrases`,
       headers: { authorization: `Bearer ${teacherToken}` },
