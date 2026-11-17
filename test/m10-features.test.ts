@@ -148,7 +148,26 @@ describe('消息弹出开关/删除 + 快捷短语 + 家长链接 + 创建教师
       headers: { authorization: `Bearer ${teacherToken}` },
     })
     expect(put.statusCode).toBe(200)
-    expect(put.json().config).toEqual({ source: 'hitokoto', cats: ['i', 'd'], max_length: 40 })
+    expect(put.json().config).toEqual({ source: 'hitokoto', cats: ['i', 'd'], max_length: 40, refresh_minutes: 0 })
+
+    // 切换周期：有效值保留；低于下限 5 归零（每天一条）
+    const withRefresh = await inject({
+      method: 'PUT',
+      url: `/api/classes/${classId}/quote-config`,
+      payload: { source: 'hitokoto', cats: ['i', 'd'], max_length: 40, refresh_minutes: 45 },
+      headers: { authorization: `Bearer ${teacherToken}` },
+    })
+    expect(withRefresh.statusCode).toBe(200)
+    expect(withRefresh.json().config.refresh_minutes).toBe(45)
+
+    const tinyRefresh = await inject({
+      method: 'PUT',
+      url: `/api/classes/${classId}/quote-config`,
+      payload: { source: 'hitokoto', cats: ['i', 'd'], max_length: 40, refresh_minutes: 2 },
+      headers: { authorization: `Bearer ${teacherToken}` },
+    })
+    expect(tinyRefresh.statusCode).toBe(200)
+    expect(tinyRefresh.json().config.refresh_minutes).toBe(0)
 
     // 学生令牌可读不可写
     const stuPut = await inject({

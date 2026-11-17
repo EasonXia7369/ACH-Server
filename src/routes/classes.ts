@@ -165,10 +165,11 @@ classRoutes.get('/api/classes/:id/quote-config', ...reader, async (c) => {
 
 classRoutes.put('/api/classes/:id/quote-config', ...teacher, async (c) => {
   const classId = Number(c.req.param('id'))
-  const { source, cats, max_length } = await c.req.json<{
+  const { source, cats, max_length, refresh_minutes } = await c.req.json<{
     source?: string
     cats?: string[]
     max_length?: number
+    refresh_minutes?: number
   }>()
   if (source !== 'builtin' && source !== 'hitokoto') {
     return c.json({ error: 'source 只能是 builtin 或 hitokoto' }, 400)
@@ -178,7 +179,10 @@ classRoutes.put('/api/classes/:id/quote-config', ...teacher, async (c) => {
     const picked = Array.isArray(cats) ? cats.filter((x) => HITOKOTO_CATS.has(x)) : []
     if (!picked.length) return c.json({ error: '至少选择一个句子分类' }, 400)
     const maxLen = Math.min(100, Math.max(10, Number(max_length) || 30))
-    config = { source, cats: picked, max_length: maxLen }
+    // 切换周期：0 = 每天一条；>0 = 每 N 分钟换一条（下限 5，避免打爆一言接口）
+    const rm = Number(refresh_minutes) || 0
+    const refresh = rm >= 5 ? Math.min(1440, Math.floor(rm)) : 0
+    config = { source, cats: picked, max_length: maxLen, refresh_minutes: refresh }
   }
   await c.env.DB
     .prepare('UPDATE classes SET quote_config = ? WHERE id = ?')

@@ -11,6 +11,7 @@ import { homeworkRoutes } from './routes/homework.js'
 import { dutyRoutes } from './routes/duty.js'
 import { kioskRoutes } from './routes/kiosk.js'
 import { messageRoutes } from './routes/messages.js'
+import { pushRoutes } from './routes/push.js'
 import { timetableRoutes } from './routes/timetable.js'
 import { reportRoutes } from './routes/reports.js'
 import { parentRoutes } from './routes/parent.js'
@@ -52,6 +53,7 @@ export function createApp() {
   app.route('/', dutyRoutes)
   app.route('/', kioskRoutes)
   app.route('/', messageRoutes)
+  app.route('/', pushRoutes)
   app.route('/', timetableRoutes)
   app.route('/', reportRoutes)
   app.route('/', parentRoutes)

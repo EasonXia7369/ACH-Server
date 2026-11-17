@@ -2,6 +2,12 @@ import { Hono } from 'hono'
 import type { AppContext } from '../types.js'
 import { authenticate, bearerToken, canAccessClass, sessionFromToken } from '../auth.js'
 import { broadcast, broadcastRefresh } from '../realtime.js'
+import { pushClass, sideTask } from '../push.js'
+
+/** 发起操作的设备 id（X-Push-Device 头）：推送时排除发送者自己的设备 */
+function senderDevice(c: any): string | undefined {
+  return c.req.header('X-Push-Device') || undefined
+}
 
 export const messageRoutes = new Hono<AppContext>()
 
@@ -127,6 +133,24 @@ messageRoutes.post(
       created_at: created?.created_at ?? new Date().toISOString(),
     }
     await broadcast(c.env, classId, { type: 'message', message })
+    // Web Push：发给全班订阅设备（发送者自身设备除外）；不阻塞响应
+    sideTask(c, () =>
+      pushClass(
+        c.env,
+        classId,
+        {
+          type: 'message',
+          title:
+            sender.role === 'teacher'
+              ? '老师来消息了'
+              : actorName
+                ? `${actorName}来消息了`
+                : '值日生来消息了',
+          body: text,
+        },
+        senderDevice(c),
+      ),
+    )
     return c.json({ message })
   },
 )
@@ -211,6 +235,24 @@ messageRoutes.post(
       created_at: created?.created_at ?? new Date().toISOString(),
     }
     await broadcast(c.env, classId, { type: 'message', message })
+    // Web Push：媒体消息只提示类型，不预览内容
+    sideTask(c, () =>
+      pushClass(
+        c.env,
+        classId,
+        {
+          type: 'message',
+          title:
+            sender.role === 'teacher'
+              ? '老师来消息了'
+              : actorName
+                ? `${actorName}来消息了`
+                : '值日生来消息了',
+          body: kind === 'image' ? '[图片]' : '[语音消息]',
+        },
+        senderDevice(c),
+      ),
+    )
     return c.json({ message })
   },
 )

@@ -3,6 +3,7 @@ import type { AppContext } from '../types.js'
 import { authenticate, requireRole } from '../auth.js'
 import { audit } from '../audit.js'
 import { broadcastRefresh } from '../realtime.js'
+import { pushClass, sideTask } from '../push.js'
 
 export const attendanceRoutes = new Hono<AppContext>()
 
@@ -125,6 +126,26 @@ attendanceRoutes.put(
     )
 
     await c.env.DB.batch(stmts)
+
+    // 考勤变更同步给其他在线设备（大板等自动重拉）
+    await broadcastRefresh(c.env, classId, 'attendance', day)
+    // Web Push：仅异常状态（请假/迟到/旷课/违纪）值得提醒全班；纯出勤清格不打扰
+    const exceptionCount = (byStatus.leave ?? 0) + (byStatus.late ?? 0) + (byStatus.absent ?? 0) + (byStatus.violate ?? 0)
+    if (exceptionCount > 0) {
+      const ZH: Record<string, string> = { leave: '请假', late: '迟到', absent: '旷课', violate: '违纪' }
+      const summary = Object.entries(byStatus)
+        .filter(([s]) => s in ZH)
+        .map(([s, n]) => `${ZH[s]}×${n}`)
+        .join(' ')
+      sideTask(c, () =>
+        pushClass(
+          c.env,
+          classId,
+          { type: 'attendance', title: '考勤更新', body: `${day} 考勤登记：${summary}` },
+          c.req.header('X-Push-Device') || undefined,
+        ),
+      )
+    }
     return c.json({ ok: true, saved: entries.length })
   },
 )

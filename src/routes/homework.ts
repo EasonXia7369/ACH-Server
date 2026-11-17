@@ -3,6 +3,7 @@ import type { AppContext } from '../types.js'
 import { authenticate, requireRole } from '../auth.js'
 import { audit } from '../audit.js'
 import { broadcastRefresh } from '../realtime.js'
+import { pushClass, sideTask } from '../push.js'
 
 export const homeworkRoutes = new Hono<AppContext>()
 
@@ -218,6 +219,19 @@ homeworkRoutes.put(
       audit(c.env.DB, classId, actor, user.userId || null, actorLabel, `${day} ${subj}：${text.slice(0, 40)}`),
     ])
     await broadcastRefresh(c.env, classId, 'tasks', day)
+    // Web Push：布置/清空作业都提醒（发送者自身设备除外）
+    sideTask(c, () =>
+      pushClass(
+        c.env,
+        classId,
+        {
+          type: 'homework',
+          title: '作业更新',
+          body: text ? `${day} ${subj}：${text}` : `${day} ${subj} 作业已清空`,
+        },
+        c.req.header('X-Push-Device') || undefined,
+      ),
+    )
     return c.json({ ok: true })
   },
 )
