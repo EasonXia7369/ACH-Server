@@ -4,6 +4,7 @@ import {
   authenticate,
   canAccessClass,
   createSession,
+  defaultSchoolId,
   hashStudentPassword,
   requireRole,
   verifyPassword,
@@ -40,13 +41,25 @@ classRoutes.get(
     const user = c.get('user')!
     const rows =
       user.role === 'admin'
-        ? (
-            await c.env.DB.prepare(
-              `SELECT c.*, u.name AS teacher_name,
-                      (SELECT COUNT(*) FROM students s WHERE s.class_id = c.id AND s.active = 1) AS student_count
-               FROM classes c JOIN users u ON u.id = c.teacher_id ORDER BY c.id`,
-            ).all<any>()
-          ).results
+        ? // 平台超管看全部；校管理员仅本校
+          user.schoolId != null
+          ? (
+              await c.env.DB.prepare(
+                `SELECT c.*, u.name AS teacher_name,
+                        (SELECT COUNT(*) FROM students s WHERE s.class_id = c.id AND s.active = 1) AS student_count
+                 FROM classes c JOIN users u ON u.id = c.teacher_id
+                 WHERE c.school_id = ?1 ORDER BY c.id`,
+              )
+                .bind(user.schoolId)
+                .all<any>()
+            ).results
+          : (
+              await c.env.DB.prepare(
+                `SELECT c.*, u.name AS teacher_name,
+                        (SELECT COUNT(*) FROM students s WHERE s.class_id = c.id AND s.active = 1) AS student_count
+                 FROM classes c JOIN users u ON u.id = c.teacher_id ORDER BY c.id`,
+              ).all<any>()
+            ).results
         : (
             await c.env.DB.prepare(
               `SELECT c.*, u.name AS teacher_name,
@@ -64,10 +77,37 @@ classRoutes.get(
 )
 
 classRoutes.post('/api/classes', authenticate, requireRole('teacher', 'admin'), async (c) => {
+  const user = c.get('user')!
   const { name, grade } = await c.req.json<{ name?: string; grade?: string }>()
   if (!name?.trim()) return c.json({ error: '班级名称不能为空' }, 400)
-  const ins = await c.env.DB.prepare('INSERT INTO classes (name, grade, teacher_id) VALUES (?,?,?)')
-    .bind(name.trim(), grade?.trim() ?? '', c.get('user')!.userId)
+  // 学校归属：教师/校管理员用自己所属学校；平台超管归默认学校（可用 school 路由指定）
+  const schoolId =
+    user.role === 'teacher'
+      ? (user.schoolId ?? (await defaultSchoolId(c.env.DB)))
+      : (user.schoolId ?? (await defaultSchoolId(c.env.DB)))
+  // 年级：按名称在本校 find-or-create（空 = 未分组）
+  let gradeId: number | null = null
+  const gradeName = grade?.trim() ?? ''
+  if (gradeName) {
+    let g = await c.env.DB
+      .prepare('SELECT id FROM grades WHERE school_id = ?1 AND name = ?2')
+      .bind(schoolId, gradeName)
+      .first<{ id: number }>()
+    if (!g) {
+      const insG = await c.env.DB
+        .prepare('INSERT INTO grades (school_id, name) VALUES (?1,?2)')
+        .bind(schoolId, gradeName)
+        .run()
+      gradeId = insG.meta.last_row_id as number
+    } else {
+      gradeId = g.id
+    }
+  }
+  const ins = await c.env.DB
+    .prepare(
+      'INSERT INTO classes (name, grade, teacher_id, school_id, grade_id) VALUES (?,?,?,?,?)',
+    )
+    .bind(name.trim(), gradeName, user.userId, schoolId, gradeId)
     .run()
   const cls = await c.env.DB.prepare('SELECT * FROM classes WHERE id = ?')
     .bind(ins.meta.last_row_id as number)
@@ -208,10 +248,12 @@ classRoutes.post('/api/classes/:id/parent-link', ...teacher, async (c) => {
 /** 班主任/管理员：可添加为本班协作教师的候选列表（全部教师）。 */
 classRoutes.get('/api/classes/:id/available-teachers', ...teacher, async (c) => {
   const classId = Number(c.req.param('id'))
+  // 多校：候选教师限本校
   const rows = (
     await c.env.DB.prepare(
       `SELECT u.id, u.name FROM users u
        WHERE u.role = 'teacher'
+         AND u.school_id = (SELECT school_id FROM classes WHERE id = ?1)
          AND u.id != (SELECT teacher_id FROM classes WHERE id = ?1)
          AND u.id NOT IN (SELECT user_id FROM class_teachers WHERE class_id = ?1)
        ORDER BY u.name`,
@@ -233,6 +275,12 @@ classRoutes.post('/api/classes/:id/teachers', ...teacher, async (c) => {
     .bind(user_id)
     .first<any>()
   if (!target) return c.json({ error: '目标账号不存在或不是教师' }, 400)
+  // 多校：只能添加本校教师
+  const sameSchool = await c.env.DB
+    .prepare('SELECT 1 AS ok FROM users u, classes c WHERE u.id = ?1 AND c.id = ?2 AND u.school_id = c.school_id')
+    .bind(user_id, classId)
+    .first()
+  if (!sameSchool) return c.json({ error: '只能添加本校教师为协作教师' }, 400)
   const owner = await c.env.DB.prepare('SELECT teacher_id FROM classes WHERE id = ?')
     .bind(classId)
     .first<any>()

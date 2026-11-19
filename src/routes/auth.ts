@@ -7,12 +7,13 @@ import {
   destroySession,
   hashPassword,
   verifyPassword,
+  defaultSchoolId,
 } from '../auth.js'
 import { audit } from '../audit.js'
 
 export const authRoutes = new Hono<AppContext>()
 
-/** 首个管理员：用 ARK_BOOTSTRAP_CODE 作为一次性引导码激活。 */
+/** 首个管理员：用 ARK_BOOTSTRAP_CODE 作为一次性引导码激活（平台超管）。 */
 authRoutes.post('/api/auth/activate', async (c) => {
   const { code, name, password } = await c.req.json<{
     code?: string
@@ -24,6 +25,8 @@ authRoutes.post('/api/auth/activate', async (c) => {
 
   const bootstrap = c.env.ARK_BOOTSTRAP_CODE
   let role: 'teacher' | 'admin'
+  /** 激活后的学校归属：NULL = 平台级（超管/平台教师） */
+  let schoolId: number | null = null
   let invite: any = null
 
   if (bootstrap && code === bootstrap) {
@@ -42,6 +45,9 @@ authRoutes.post('/api/auth/activate', async (c) => {
       return c.json({ error: '邀请码已过期' }, 400)
     }
     role = invite.role
+    // 学校归属：校管理员/教师邀请绑定学校；平台超管发的教师邀请（school_id NULL）归默认学校
+    schoolId =
+      invite.school_id ?? (role === 'teacher' ? await defaultSchoolId(c.env.DB) : null)
   }
 
   const dup = await c.env.DB.prepare('SELECT 1 AS ok FROM users WHERE name = ?')
@@ -50,8 +56,9 @@ authRoutes.post('/api/auth/activate', async (c) => {
   if (dup) return c.json({ error: '该姓名已被使用' }, 400)
 
   const passHash = await hashPassword(password)
-  const ins = await c.env.DB.prepare('INSERT INTO users (name, role, pass_hash) VALUES (?,?,?)')
-    .bind(name.trim(), role, passHash)
+  const ins = await c.env.DB
+    .prepare('INSERT INTO users (name, role, pass_hash, school_id) VALUES (?,?,?,?)')
+    .bind(name.trim(), role, passHash, schoolId)
     .run()
   const userId = ins.meta.last_row_id as number
 
@@ -62,7 +69,7 @@ authRoutes.post('/api/auth/activate', async (c) => {
   }
 
   const token = await createSession(c.env.DB, userId, role, null)
-  return c.json({ token, user: { id: userId, name: name.trim(), role } })
+  return c.json({ token, user: { id: userId, name: name.trim(), role, schoolId } })
 })
 
 authRoutes.post('/api/auth/login', async (c) => {
@@ -75,7 +82,10 @@ authRoutes.post('/api/auth/login', async (c) => {
     return c.json({ error: '姓名或密码错误' }, 401)
   }
   const token = await createSession(c.env.DB, user.id, user.role, null)
-  return c.json({ token, user: { id: user.id, name: user.name, role: user.role } })
+  return c.json({
+    token,
+    user: { id: user.id, name: user.name, role: user.role, schoolId: user.school_id },
+  })
 })
 
 authRoutes.post('/api/auth/logout', authenticate, async (c) => {

@@ -15,9 +15,16 @@ export interface SessionUser {
   name: string
   /** student 会话绑定班级 */
   classId?: number
+  /**
+   * 所属学校（多校体系）：
+   * - admin：NULL = 平台超管，非空 = 校管理员（仅本校）
+   * - teacher：所属学校（创建班级时落 school_id；接口查询按此隔离）
+   * - student：随班级（session.class_id → classes.school_id）
+   */
+  schoolId?: number | null
 }
 
 export type AppContext = {
   Bindings: Env
-  Variables: { user?: SessionUser }
+  Variables: { user?: SessionUser; schoolId?: number }
 }

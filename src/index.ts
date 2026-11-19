@@ -15,6 +15,8 @@ import { pushRoutes } from './routes/push.js'
 import { timetableRoutes } from './routes/timetable.js'
 import { reportRoutes } from './routes/reports.js'
 import { parentRoutes } from './routes/parent.js'
+import { schoolRoutes } from './routes/school.js'
+import { gradeRoutes } from './routes/grades.js'
 
 /** 允许的前端来源：生产 Pages 域名 + 本地 Vite 开发服务器 + Windows 桌面端(Electron 自定义协议) */
 const ALLOWED_ORIGINS = ['https://ach.macrostar.top', 'http://localhost:5173', 'ark://app']
@@ -57,6 +59,8 @@ export function createApp() {
   app.route('/', timetableRoutes)
   app.route('/', reportRoutes)
   app.route('/', parentRoutes)
+  app.route('/', schoolRoutes)
+  app.route('/', gradeRoutes)
 
   app.notFound((c) => c.json({ error: '接口不存在' }, 404))
 

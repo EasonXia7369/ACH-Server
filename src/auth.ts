@@ -101,7 +101,7 @@ export async function sessionFromToken(
   if (!token) return null
   const row = await db
     .prepare(
-      `SELECT s.kind, s.class_id, s.expires_at, u.id AS uid, u.role, u.name
+      `SELECT s.kind, s.class_id, s.expires_at, u.id AS uid, u.role, u.name, u.school_id
        FROM sessions s LEFT JOIN users u ON u.id = s.user_id
        WHERE s.token = ?1`,
     )
@@ -111,7 +111,7 @@ export async function sessionFromToken(
   if (new Date(row.expires_at).getTime() < Date.now()) return null
   return row.kind === 'student'
     ? { userId: 0, role: 'student', name: '学生', classId: row.class_id }
-    : { userId: row.uid, role: row.role, name: row.name }
+    : { userId: row.uid, role: row.role, name: row.name, schoolId: row.school_id }
 }
 
 declare module 'hono' {
@@ -125,7 +125,7 @@ export async function authenticate(c: Context<AppContext>, next: Next) {
   const token = bearerToken(c)
   if (!token) return c.json({ error: '未登录' }, 401)
   const row = await c.env.DB.prepare(
-    `SELECT s.kind, s.class_id, s.expires_at, u.id AS uid, u.role, u.name
+    `SELECT s.kind, s.class_id, s.expires_at, u.id AS uid, u.role, u.name, u.school_id
      FROM sessions s LEFT JOIN users u ON u.id = s.user_id
      WHERE s.token = ?`,
   )
@@ -140,7 +140,7 @@ export async function authenticate(c: Context<AppContext>, next: Next) {
     'user',
     row.kind === 'student'
       ? { userId: 0, role: 'student', name: '学生', classId: row.class_id }
-      : { userId: row.uid, role: row.role, name: row.name },
+      : { userId: row.uid, role: row.role, name: row.name, schoolId: row.school_id },
   )
   await next()
 }
@@ -151,6 +151,52 @@ export function requireRole(...roles: SessionUser['role'][]) {
     if (!user || !roles.includes(user.role)) return c.json({ error: '权限不足' }, 403)
     await next()
   }
+}
+
+/** 平台超管：admin 且未挂学校（可管理所有学校、指派校管理员） */
+export function isPlatformAdmin(user: SessionUser): boolean {
+  return user.role === 'admin' && (user.schoolId == null || user.schoolId === undefined)
+}
+
+/** 校管理员：admin 且挂了学校（仅本校范围） */
+export function isSchoolAdmin(user: SessionUser): boolean {
+  return user.role === 'admin' && user.schoolId != null
+}
+
+/** requireRole 变体：仅平台超管 */
+export function requirePlatformAdmin() {
+  return async (c: Context<AppContext>, next: Next) => {
+    const user = c.get('user')
+    if (!user || user.role !== 'admin' || isSchoolAdmin(user)) {
+      return c.json({ error: '需要平台管理员权限' }, 403)
+    }
+    await next()
+  }
+}
+
+/** 用户是否为该班所属年级的年级主任（只读授权） */
+export async function isGradeDirectorOf(
+  db: D1Database,
+  user: SessionUser,
+  classId: number,
+): Promise<boolean> {
+  if (user.role !== 'teacher' || !user.userId) return false
+  const row = await db
+    .prepare(
+      `SELECT 1 AS ok FROM grade_directors gd
+       JOIN grades g ON g.id = gd.grade_id
+       JOIN classes c ON c.grade_id = g.id
+       WHERE gd.user_id = ?1 AND c.id = ?2`,
+    )
+    .bind(user.userId, classId)
+    .first()
+  return !!row
+}
+
+/** 默认学校 id（回填/兜底用；迁移后恒存在） */
+export async function defaultSchoolId(db: D1Database): Promise<number> {
+  const row = await db.prepare('SELECT MIN(id) AS id FROM schools').first<{ id: number }>()
+  return row?.id ?? 1
 }
 
 /** teacher/admin 对某班级的访问权（admin 全局放行）；student 仅限绑定班级。 */
