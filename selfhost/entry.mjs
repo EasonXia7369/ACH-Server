@@ -25,13 +25,14 @@ import { ChatHub, makeChatBinding } from './chat-hub.mjs'
  */
 
 // 打包布局的根目录 = server.js 所在目录的上一级
+// 面板（panel/）托管时通过环境变量覆盖：ARK_CONFIG_FILE / ARK_DATA_DIR / ARK_WEB_ROOT
 const pkgRoot = path.resolve(__dirname, '..')
 const serverDir = __dirname
-const dataDir = path.join(pkgRoot, 'data')
+const dataDir = process.env.ARK_DATA_DIR || path.join(pkgRoot, 'data')
 
 /* ---------- 配置 ---------- */
 
-const configPath = path.join(pkgRoot, 'config.json')
+const configPath = process.env.ARK_CONFIG_FILE || path.join(pkgRoot, 'config.json')
 let config
 if (fs.existsSync(configPath)) {
   config = JSON.parse(fs.readFileSync(configPath, 'utf8'))
@@ -71,7 +72,7 @@ const app = createApp()
 
 /* ---------- 静态托管（web/dist，SPA 回退） ---------- */
 
-const webRoot = path.join(pkgRoot, 'web', 'dist')
+const webRoot = process.env.ARK_WEB_ROOT || path.join(pkgRoot, 'web', 'dist')
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript',

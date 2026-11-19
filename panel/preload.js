@@ -1,0 +1,25 @@
+const { contextBridge, ipcRenderer } = require('electron')
+
+contextBridge.exposeInMainWorld('panel', {
+  state: () => ipcRenderer.invoke('panel:state'),
+  logs: () => ipcRenderer.invoke('panel:logs'),
+  onLog: (cb) => ipcRenderer.on('panel:log', (_e, line) => cb(line)),
+  onUpgradeProgress: (cb) => ipcRenderer.on('panel:upgrade-progress', (_e, s) => cb(s)),
+  getConfig: () => ipcRenderer.invoke('panel:get-config'),
+  saveConfig: (patch) => ipcRenderer.invoke('panel:save-config', patch),
+  checkPort: (port) => ipcRenderer.invoke('panel:check-port', port),
+  startService: () => ipcRenderer.invoke('panel:start-service'),
+  stopService: () => ipcRenderer.invoke('panel:stop-service'),
+  restartService: () => ipcRenderer.invoke('panel:restart-service'),
+  openWeb: () => ipcRenderer.invoke('panel:open-web'),
+  openFolder: (which) => ipcRenderer.invoke('panel:open-folder', which),
+  backupNow: () => ipcRenderer.invoke('panel:backup-now'),
+  listBackups: () => ipcRenderer.invoke('panel:list-backups'),
+  restoreBackup: (name) => ipcRenderer.invoke('panel:restore-backup', name),
+  checkUpdate: () => ipcRenderer.invoke('panel:check-update'),
+  applyUpdate: () => ipcRenderer.invoke('panel:apply-update'),
+  rebootIntoUpdate: () => ipcRenderer.invoke('panel:reboot-into-update'),
+  setAutostart: (on) => ipcRenderer.invoke('panel:set-autostart', on),
+  openCertFolder: () => ipcRenderer.invoke('panel:open-cert-folder'),
+  finishWizard: (cfg) => ipcRenderer.invoke('panel:finish-wizard', cfg),
+})

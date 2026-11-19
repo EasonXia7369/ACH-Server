@@ -1,0 +1,65 @@
+{
+  "name": "ark-panel",
+  "productName": "ArkClassHub服务面板",
+  "version": "1.0.0",
+  "private": true,
+  "description": "方舟班级中心 · 学校服务器服务面板（托盘宿主 + 管理）",
+  "main": "main.js",
+  "author": "ArkClassHub",
+  "scripts": {
+    "start": "electron .",
+    "dist": "node prepare-bundle.mjs && electron-builder --win nsis --win zip"
+  },
+  "dependencies": {
+    "node-forge": "^1.3.1"
+  },
+  "devDependencies": {
+    "electron": "^45.3.3",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "top.macrostar.arkpanel",
+    "productName": "ArkClassHub服务面板",
+    "directories": {
+      "output": "release"
+    },
+    "files": ["main.js", "preload.js", "ui/**", "package.json"],
+    "extraResources": [
+      {
+        "from": "bundle/runtime",
+        "to": "bundle/runtime"
+      },
+      {
+        "from": "bundle/server",
+        "to": "bundle/server"
+      },
+      {
+        "from": "bundle/web",
+        "to": "bundle/web"
+      }
+    ],
+    "asarUnpack": ["node_modules/node-forge/**"],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "language": "2052",
+      "installerLanguages": ["zh_CN"],
+      "artifactName": "ArkClassHub-Panel-Setup-${version}.${ext}"
+    },
+    "artifactName": "ArkClassHub-Panel-${version}-${os}.${ext}"
+  }
+}

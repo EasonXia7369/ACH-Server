@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>ArkClassHub 服务面板</title>
+<style>
+  :root {
+    --bg: #eef1f7;
+    --panel: rgba(255, 255, 255, 0.82);
+    --line: rgba(15, 23, 42, 0.1);
+    --text: #17203a;
+    --muted: #64748b;
+    --faint: #94a3b8;
+    --primary: #4f6ef7;
+    --primary-dark: #2f49b2;
+    --primary-soft: rgba(79, 110, 247, 0.12);
+    --ok: #16a34a;
+    --warn: #d97706;
+    --err: #dc2626;
+    --radius: 16px;
+    --radius-sm: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'MiSans', 'Microsoft YaHei', system-ui, sans-serif;
+    background:
+      radial-gradient(1200px 600px at 85% -10%, rgba(79, 110, 247, 0.14), transparent 60%),
+      radial-gradient(900px 500px at -10% 110%, rgba(47, 73, 178, 0.1), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 26px 22px 40px; }
+  .glass {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
+    padding: 20px 24px;
+    margin-bottom: 16px;
+    backdrop-filter: blur(10px);
+  }
+  h1 { font-size: 19px; margin: 0 0 2px; display: flex; align-items: center; gap: 10px; }
+  h2 { font-size: 14.5px; margin: 0 0 10px; }
+  .sub { color: var(--muted); font-size: 12.5px; margin: 0 0 16px; }
+  .brand-dot {
+    width: 34px; height: 34px; border-radius: 11px; flex: none;
+    background: linear-gradient(135deg, #4f6ef7, #2f49b2);
+    display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 15px;
+  }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  label.fl { font-size: 12.5px; color: var(--muted); font-weight: 600; display: block; margin: 12px 0 4px; }
+  input[type="text"], input[type="number"], select {
+    font-family: inherit; font-size: 14px; color: var(--text);
+    border: 1px solid var(--line); background: #fff; padding: 9px 12px;
+    border-radius: var(--radius-sm); outline: none; min-width: 0;
+  }
+  input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+  button.btn {
+    font-family: inherit; font-size: 13px; cursor: pointer;
+    border: 1px solid var(--line); background: #fff; color: var(--text);
+    padding: 9px 16px; border-radius: var(--radius-sm); font-weight: 500;
+    transition: all 0.15s;
+  }
+  button.btn:hover { background: #f4f6fb; }
+  button.btn.primary { background: var(--primary); border-color: transparent; color: #fff; font-weight: 600; }
+  button.btn.primary:hover { background: var(--primary-dark); }
+  button.btn.danger { color: var(--err); }
+  button.btn:disabled { opacity: 0.45; cursor: default; }
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 16px; }
+  .tabs button {
+    font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    border: none; background: transparent; color: var(--muted);
+    padding: 8px 14px; border-radius: 999px;
+  }
+  .tabs button.on { background: var(--primary-soft); color: var(--primary); }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stat { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 14px; }
+  .stat .v { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .k { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .dot.bad { background: var(--err); }
+  .dot.warn { background: var(--warn); }
+  .logs {
+    background: #0f172a; color: #cbd5e1; border-radius: var(--radius-sm);
+    font-family: Consolas, monospace; font-size: 11.5px; line-height: 1.65;
+    padding: 14px 16px; height: 300px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+  }
+  .hint { font-size: 12px; color: var(--faint); line-height: 1.7; }
+  .hint b { color: var(--muted); }
+  .ok-text { color: var(--ok); font-size: 12.5px; }
+  .err-text { color: var(--err); font-size: 12.5px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); font-weight: 600; }
+  td { padding: 7px 8px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  .wizard-steps { display: flex; gap: 8px; margin-bottom: 18px; }
+  .wizard-steps span { font-size: 12px; color: var(--faint); font-weight: 600; }
+  .wizard-steps span.on { color: var(--primary); }
+  .check-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
+  .switch { position: relative; width: 40px; height: 24px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch i {
+    position: absolute; inset: 0; background: #cbd5e1; border-radius: 999px; cursor: pointer; transition: 0.2s;
+  }
+  .switch i::after {
+    content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+    background: #fff; border-radius: 50%; transition: 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  }
+  .switch input:checked + i { background: var(--primary); }
+  .switch input:checked + i::after { transform: translateX(16px); }
+  code.key {
+    background: #fff; border: 1px dashed var(--line); padding: 8px 14px; border-radius: 8px;
+    font-family: Consolas, monospace; font-size: 16px; letter-spacing: 0.12em; font-weight: 700;
+  }
+  .prog { height: 8px; background: #e2e8f0; border-radius: 999px; overflow: hidden; margin-top: 10px; }
+  .prog i { display: block; height: 100%; background: var(--primary); border-radius: 999px; transition: width 0.3s; width: 0; }
+  .hide { display: none !important; }
+</style>
+</head>
+<body>
+<div id="boot-err" class="err-text hide" style="position: fixed; top: 0; left: 0; right: 0; background: #fee2e2; padding: 8px 14px; z-index: 99; font-size: 12px"></div>
+<script>
+  window.addEventListener('error', (e) => {
+    const el = document.getElementById('boot-err');
+    el.textContent = '页面脚本错误：' + (e.message || String(e.error || e));
+    el.classList.remove('hide');
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const el = document.getElementById('boot-err');
+    el.textContent = '异步错误：' + String(e.reason?.message ?? e.reason);
+    el.classList.remove('hide');
+  });
+</script>
+<div class="wrap">
+  <div class="glass" style="margin-bottom: 18px">
+    <h1><span class="brand-dot">方</span>ArkClassHub 服务面板 <span class="sub" id="ver" style="margin: 0"></span></h1>
+    <p class="sub" style="margin: 4px 0 0" id="school-line"></p>
+  </div>
+
+  <!-- 首次向导 -->
+  <div id="view-wizard" class="hide">
+    <div class="glass">
+      <h2>欢迎使用 · 初始配置</h2>
+      <p class="sub">四步完成，之后班级中心即可在局域网内访问。这些设置之后都可以在面板里修改。</p>
+      <label class="fl">学校名称（选填，仅用于展示）</label>
+      <input type="text" id="wz-school" placeholder="如：实验中学" maxlength="30" style="width: 260px" />
+      <label class="fl">服务端口</label>
+      <div class="row">
+        <input type="number" id="wz-port" value="8080" min="80" max="65535" style="width: 120px" />
+        <span class="hint" id="wz-port-hint">教室设备通过 <b>http://本机IP:端口</b> 访问</span>
+      </div>
+      <label class="fl">引导码（首次激活管理员账号用，只出现一次）</label>
+      <div class="row">
+        <code class="key" id="wz-code">--------</code>
+        <button class="btn" id="wz-code-regen">换一个</button>
+      </div>
+      <div class="check-row">
+        <label class="switch"><input type="checkbox" id="wz-https" /><i></i></label>
+        开启 HTTPS（浏览器推送/添加到主屏幕需要；设备需信任一次证书，之后面板会引导）
+      </div>
+      <p class="err-text hide" id="wz-err"></p>
+      <div class="row" style="margin-top: 18px">
+        <button class="btn primary" id="wz-finish" style="min-width: 140px">完成并启动服务</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 主面板 -->
+  <div id="view-main" class="hide">
+    <div class="tabs" id="tabs">
+      <button data-tab="status" class="on">状态</button>
+      <button data-tab="config">配置</button>
+      <button data-tab="logs">日志</button>
+      <button data-tab="backup">备份</button>
+      <button data-tab="https">HTTPS</button>
+      <button data-tab="upgrade">升级</button>
+    </div>
+
+    <!-- 状态 -->
+    <div id="tab-status" class="glass">
+      <div class="stat-grid">
+        <div class="stat"><div class="v" id="st-service">—</div><div class="k">班级服务</div></div>
+        <div class="stat"><div class="v" id="st-port">—</div><div class="k">HTTP 端口</div></div>
+        <div class="stat"><div class="v" id="st-https">—</div><div class="k">HTTPS</div></div>
+        <div class="stat"><div class="v" id="st-db">—</div><div class="k">数据库大小</div></div>
+        <div class="stat"><div class="v" id="st-backups">—</div><div class="k">备份数量</div></div>
+        <div class="stat"><div class="v" id="st-uptime">—</div><div class="k">运行时长</div></div>
+      </div>
+      <div class="row" style="margin-top: 16px">
+        <button class="btn primary" id="act-open">打开班级中心</button>
+        <button class="btn" id="act-restart">重启服务</button>
+        <button class="btn danger" id="act-stop">停止服务</button>
+        <button class="btn hide" id="act-start">启动服务</button>
+      </div>
+      <p class="hint" style="margin-top: 12px" id="st-hint"></p>
+    </div>
+
+    <!-- 配置 -->
+    <div id="tab-config" class="glass hide">
+      <label class="fl">学校名称（展示用）</label>
+      <input type="text" id="cf-school" maxlength="30" style="width: 260px" />
+      <label class="fl">服务端口（改动后自动重启服务）</label>
+      <input type="number" id="cf-port" min="80" max="65535" style="width: 120px" />
+      <label class="fl">引导码（管理员未激活前有效）</label>
+      <input type="text" id="cf-code" maxlength="8" style="width: 160px; font-family: Consolas, monospace; letter-spacing: 0.1em" />
+      <label class="fl">Web Push VAPID（选填，HTTPS 下生效；格式同 wrangler secret）</label>
+      <input type="text" id="cf-vpub" placeholder="VAPID_PUBLIC_KEY" style="width: 100%" />
+      <input type="text" id="cf-vpriv" placeholder="VAPID_PRIVATE_KEY" style="width: 100%; margin-top: 6px" />
+      <div class="row" style="margin-top: 16px">
+        <button class="btn primary" id="cf-save">保存配置</button>
+        <button class="btn" id="cf-open-data">打开数据目录</button>
+        <button class="btn" id="cf-open-prog">打开程序目录</button>
+      </div>
+      <p class="hint" style="margin-top: 10px">数据都在 data/ 目录：ark.db 是数据库（备份=拷它），日志在 data/logs。</p>
+    </div>
+
+    <!-- 日志 -->
+    <div id="tab-logs" class="glass hide">
+      <div class="row" style="margin-bottom: 10px">
+        <button class="btn" id="lg-clear">清屏</button>
+        <button class="btn" id="lg-open">打开日志目录</button>
+        <span class="hint">日志同时写入 data/logs/（按天分文件）</span>
+      </div>
+      <div class="logs" id="lg-box"></div>
+    </div>
+
+    <!-- 备份 -->
+    <div id="tab-backup" class="glass hide">
+      <p class="sub" style="margin-top: 0">
+        每天自动备份一次数据库（保留最近 14 份）；恢复会先停止服务，备份之后录入的数据将被覆盖。
+      </p>
+      <div class="row">
+        <button class="btn primary" id="bk-now">立即备份</button>
+        <span class="hint" id="bk-latest"></span>
+      </div>
+      <div class="row" style="margin-top: 14px">
+        <table id="bk-table">
+          <thead><tr><th>备份文件</th><th>大小</th><th>时间</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- HTTPS -->
+    <div id="tab-https" class="glass hide">
+      <div class="check-row" style="margin: 0 0 6px">
+        <label class="switch"><input type="checkbox" id="hs-enable" /><i></i></label>
+        <b>启用 HTTPS 反向代理</b>
+        <span class="row" style="margin-left: 8px">
+          端口 <input type="number" id="hs-port" min="80" max="65535" value="8443" style="width: 100px" />
+        </span>
+      </div>
+      <p class="hint">
+        开启后用 <b id="hs-url">https://localhost:8443</b> 访问（自签证书，10 年有效）。<br />
+        浏览器推送通知、添加到主屏幕（PWA）只在 HTTPS 下可用。每个设备首次访问时浏览器会提示「不安全」，点「高级 → 继续前往」即可正常使用；
+        要彻底去掉提示，可安装信任证书：<button class="btn" id="hs-cert" style="padding: 4px 10px; font-size: 12px">打开证书文件夹</button>
+        （双击 ArkClassHub.crt → 安装证书 → 存储位置选「本地计算机」→「受信任的根证书颁发机构」）。
+      </p>
+      <div class="row" style="margin-top: 12px">
+        <button class="btn primary" id="hs-save">应用设置</button>
+        <span id="hs-state" class="hint"></span>
+      </div>
+    </div>
+
+    <!-- 升级 -->
+    <div id="tab-upgrade" class="glass hide">
+      <p class="sub" style="margin-top: 0">
+        当前版本 <b id="up-cur">—</b>。一键升级会下载新包并在面板退出后自动替换（含面板自身），全程数据保留。
+      </p>
+      <div class="row">
+        <button class="btn primary" id="up-check">检查更新</button>
+        <button class="btn hide" id="up-apply">下载并升级</button>
+        <span id="up-status" class="hint"></span>
+      </div>
+      <div class="prog hide" id="up-prog"><i id="up-prog-bar"></i></div>
+      <p class="hint" id="up-notes" style="margin-top: 12px; white-space: pre-wrap"></p>
+      <div class="prog hide" style="margin-top: 6px"><i style="width: 100%"></i></div>
+      <p class="hint" style="margin-top: 14px">
+        <b>内网服务器无法出网？</b>手动升级：在能上网的电脑下载最新 zip，解压后把里面的文件全部复制覆盖到程序目录（data/ 目录不要动），然后在这里点「重启服务」。当前程序目录：
+        <span id="up-exedir" class="num"></span>
+        <button class="btn" id="up-open-dir" style="padding: 3px 10px; font-size: 12px">打开</button>
+      </p>
+      <div class="prog hide" id="manual-hint"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s)
+const $$ = (s) => document.querySelectorAll(s)
+
+/* ---------- 视图切换 ---------- */
+function show(view) {
+  $('#view-wizard').classList.toggle('hide', view !== 'wizard')
+  $('#view-main').classList.toggle('hide', view !== 'main')
+}
+
+/* ---------- 状态渲染 ---------- */
+const STATE_LABEL = {
+  running: ['ok', '运行中'],
+  starting: ['warn', '启动中…'],
+  stopping: ['warn', '停止中…'],
+  stopped: ['bad', '已停止'],
+  crashed: ['bad', '异常停止'],
+}
+function fmtUptime(s) {
+  if (!s) return '—'
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  return h ? `${h}时${m}分` : `${m}分${s % 60}秒`
+}
+async function refreshState() {
+  const st = await window.panel.state()
+  $('#ver').textContent = 'v' + st.version
+  $('#school-line').textContent = st.schoolName ? `${st.schoolName} · 数据目录 ${st.dataDir}` : `数据目录 ${st.dataDir}`
+  const [cls, label] = STATE_LABEL[st.serviceState] ?? ['bad', st.serviceState]
+  $('#st-service').innerHTML = `<span class="dot ${cls}"></span>${label}`
+  $('#st-port').textContent = st.serviceState === 'running' ? st.port : '—'
+  $('#st-https').innerHTML = st.https.active
+    ? `<span class="dot ok"></span>启用 :${st.https.port}`
+    : '<span class="dot bad"></span>未启用'
+  $('#st-db').textContent = st.dbSizeMB ? st.dbSizeMB + ' MB' : '—'
+  $('#st-backups').textContent = st.backupCount
+  $('#st-uptime').textContent = fmtUptime(st.uptimeSec)
+  $('#st-hint').innerHTML =
+    st.serviceState === 'running'
+      ? `局域网访问：<b>${st.onlineHint.replace('localhost', '<本机IP>')}</b> · 本机：<b>${st.onlineHint}</b>${st.https.active ? ` · HTTPS：<b>${st.httpsHint}</b>` : ''}`
+      : '服务未运行：教室设备无法访问。可点上方「重启服务」或排查日志。'
+  $('#act-stop').classList.toggle('hide', st.serviceState !== 'running')
+  const startBtn = $('#act-start')
+  startBtn.classList.toggle('hide', st.serviceState === 'running')
+  startBtn.classList.toggle('btn', true)
+  if (st.serviceState === 'crashed') {
+    startBtn.textContent = '启动服务（已暂停自动重启）'
+    startBtn.classList.remove('hide')
+  } else if (st.serviceState !== 'running') {
+    startBtn.textContent = '启动服务'
+  }
+  $('#up-cur').textContent = 'v' + st.version
+  $('#up-exedir').textContent = st.exeDir
+  $('#hs-enable').checked = st.https.enabled
+  $('#hs-port').value = st.https.port
+  $('#hs-url').textContent = `https://localhost:${st.https.port}`
+  $('#hs-state').textContent = st.https.active ? '当前：反代运行中' : '当前：未启用'
+  return st
+}
+
+/* ---------- tab 切换 ---------- */
+$$('#tabs button').forEach((b) =>
+  b.addEventListener('click', () => {
+    $$('#tabs button').forEach((x) => x.classList.remove('on'))
+    b.classList.add('on')
+    $$('#view-main > .glass').forEach((g) => g.classList.add('hide'))
+    $('#tab-' + b.dataset.tab).classList.remove('hide')
+    if (b.dataset.tab === 'backup') refreshBackups()
+    if (b.dataset.tab === 'config') loadConfigForm()
+    if (b.dataset.tab === 'logs') refreshLogs()
+  }),
+)
+
+/* ---------- 日志 ---------- */
+let logBuf = []
+window.panel.onLog((line) => {
+  logBuf.push(line)
+  if (logBuf.length > 400) logBuf.splice(0, logBuf.length - 400)
+  if (!$('#tab-logs').classList.contains('hide')) renderLogs(true)
+})
+function renderLogs(scroll) {
+  const box = $('#lg-box')
+  const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 40
+  box.textContent = logBuf.join('\n')
+  if (stick && scroll) box.scrollTop = box.scrollHeight
+}
+async function refreshLogs() {
+  logBuf = await window.panel.logs()
+  renderLogs(true)
+}
+$('#lg-clear').addEventListener('click', () => ((logBuf = []), renderLogs(false)))
+$('#lg-open').addEventListener('click', () => window.panel.openFolder('data'))
+
+/* ---------- 服务操作 ---------- */
+$('#act-open').addEventListener('click', () => window.panel.openWeb())
+$('#act-restart').addEventListener('click', async (e) => {
+  e.target.disabled = true
+  await window.panel.restartService()
+  setTimeout(() => ((e.target.disabled = false), refreshState()), 1500)
+})
+$('#act-stop').addEventListener('click', async () => {
+  await window.panel.stopService()
+  refreshState()
+})
+$('#act-start').addEventListener('click', async (e) => {
+  e.target.disabled = true
+  await window.panel.startService()
+  setTimeout(() => ((e.target.disabled = false), refreshState()), 1200)
+})
+
+/* ---------- 配置 ---------- */
+async function loadConfigForm() {
+  const cfg = await window.panel.getConfig()
+  $('#cf-school').value = cfg.schoolName ?? ''
+  $('#cf-port').value = cfg.port
+  $('#cf-code').value = cfg.bootstrapCode ?? ''
+  $('#cf-vpub').value = cfg.vapidPublicKey ?? ''
+  $('#cf-vpriv').value = cfg.vapidPrivateKey ?? ''
+}
+$('#cf-save').addEventListener('click', async (e) => {
+  e.target.disabled = true
+  await window.panel.saveConfig({
+    schoolName: $('#cf-school').value.trim(),
+    port: Number($('#cf-port').value) || 8080,
+    bootstrapCode: $('#cf-code').value.trim(),
+    vapidPublicKey: $('#cf-vpub').value.trim(),
+    vapidPrivateKey: $('#cf-vpriv').value.trim(),
+  })
+  e.target.disabled = false
+  e.target.textContent = '已保存 ✓'
+  setTimeout(() => (e.target.textContent = '保存配置'), 1500)
+  refreshState()
+})
+$('#cf-open-data').addEventListener('click', () => window.panel.openFolder('data'))
+$('#cf-open-prog').addEventListener('click', () => window.panel.openFolder('program'))
+
+/* ---------- 备份 ---------- */
+async function refreshBackups() {
+  const list = await window.panel.listBackups()
+  const tb = $('#bk-table tbody')
+  tb.innerHTML = ''
+  for (const b of list) {
+    const tr = document.createElement('tr')
+    tr.innerHTML = `<td>${b.name}</td><td>${b.sizeMB} MB</td><td>${b.date.slice(0, 16).replace('T', ' ')}</td><td><button class="btn" style="padding:3px 10px;font-size:12px">恢复</button></td>`
+    tr.querySelector('button').addEventListener('click', async () => {
+      const r = await window.panel.restoreBackup(b.name)
+      if (!r?.canceled) refreshBackups()
+    })
+    tb.appendChild(tr)
+  }
+  $('#bk-latest').textContent = list.length ? `最近一次：${list[0].name}` : '还没有备份'
+}
+$('#bk-now').addEventListener('click', async (e) => {
+  e.target.disabled = true
+  e.target.textContent = '备份中…'
+  try {
+    await window.panel.backupNow()
+    await refreshBackups()
+    refreshState()
+  } catch (err) {
+    alert('备份失败：' + err.message)
+  }
+  e.target.disabled = false
+  e.target.textContent = '立即备份'
+})
+
+/* ---------- HTTPS ---------- */
+$('#hs-save').addEventListener('click', async (e) => {
+  e.target.disabled = true
+  await window.panel.saveConfig({
+    httpsEnabled: $('#hs-enable').checked,
+    httpsPort: Number($('#hs-port').value) || 8443,
+  })
+  e.target.disabled = false
+  setTimeout(refreshState, 800)
+})
+$('#hs-cert').addEventListener('click', () => window.panel.openCertFolder())
+
+/* ---------- 升级 ---------- */
+let updateInfo = null
+$('#up-check').addEventListener('click', async (e) => {
+  e.target.disabled = true
+  $('#up-status').textContent = '正在检查…'
+  try {
+    updateInfo = await window.panel.checkUpdate()
+    $('#up-notes').textContent = updateInfo.notes || ''
+    if (updateInfo.updateAvailable) {
+      $('#up-status').innerHTML = `发现新版本 <b>v${updateInfo.latest}</b>（当前 v${updateInfo.current}）`
+      $('#up-apply').classList.remove('hide')
+    } else {
+      $('#up-status').textContent = updateInfo.latest
+        ? `已是最新版本（v${updateInfo.current}）`
+        : '没有找到面板版本（Release 未发布？），可用手动升级方式'
+    }
+  } catch (err) {
+    $('#up-status').textContent = '检查失败：' + err.message + '（服务器无法访问 GitHub？请用下方手动升级）'
+  }
+  e.target.disabled = false
+})
+$('#up-apply').addEventListener('click', async (e) => {
+  e.target.disabled = true
+  $('#up-prog').classList.remove('hide')
+  $('#up-prog-bar').style.width = '30%'
+  $('#up-status').textContent = '下载中…'
+  window.panel.onUpgradeProgress((s) => {
+    $('#up-status').textContent = s
+    if (s.includes('脚本')) $('#up-prog-bar').style.width = '100%'
+  })
+  try {
+    const v = await window.panel.applyUpdate()
+    $('#up-prog-bar').style.width = '100%'
+    $('#up-status').innerHTML = `v${v} 已就绪。<b>点下方按钮重启面板完成升级</b>（服务会随面板自动重启，数据不受影响）。`
+    const btn = document.createElement('button')
+    btn.className = 'btn primary'
+    btn.textContent = '重启面板并完成升级'
+    btn.style.marginTop = '10px'
+    btn.addEventListener('click', () => window.panel.rebootIntoUpdate())
+    $('#up-notes').after(btn)
+  } catch (err) {
+    $('#up-status').textContent = '升级失败：' + err.message
+    $('#up-prog').classList.add('hide')
+  }
+  e.target.disabled = false
+})
+$('#up-open-dir').addEventListener('click', () => window.panel.openFolder('program'))
+
+/* ---------- 向导 ---------- */
+let wzCode = '--------'
+function regenCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  wzCode = Array.from({ length: 8 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('')
+  $('#wz-code').textContent = wzCode
+}
+$('#wz-code-regen').addEventListener('click', regenCode)
+$('#wz-port').addEventListener('input', async () => {
+  const p = Number($('#wz-port').value)
+  if (!p) return
+  const r = await window.panel.checkPort(p)
+  $('#wz-port-hint').innerHTML = r.ok
+    ? `端口可用 ✓ 教室设备通过 <b>http://本机IP:${p}</b> 访问`
+    : `<span class="err-text">端口 ${p} 已被其他程序占用，请换一个</span>`
+})
+$('#wz-finish').addEventListener('click', async (e) => {
+  const port = Number($('#wz-port').value) || 8080
+  const r = await window.panel.checkPort(port)
+  if (!r.ok) {
+    $('#wz-err').textContent = `端口 ${port} 被占用，请换一个`
+    $('#wz-err').classList.remove('hide')
+    return
+  }
+  e.target.disabled = true
+  e.target.textContent = '启动中…'
+  try {
+    await window.panel.finishWizard({
+      schoolName: $('#wz-school').value.trim(),
+      port,
+      bootstrapCode: wzCode,
+      httpsEnabled: $('#wz-https').checked,
+    })
+    enterMain()
+  } catch (err) {
+    $('#wz-err').textContent = '启动失败：' + err.message
+    $('#wz-err').classList.remove('hide')
+    e.target.disabled = false
+    e.target.textContent = '完成并启动服务'
+  }
+})
+
+/* ---------- 启动 ---------- */
+async function enterMain() {
+  show('main')
+  await refreshState()
+  setInterval(refreshState, 4000)
+  refreshLogs()
+}
+;(async () => {
+  const st = await window.panel.state()
+  if (st.wizardNeeded) {
+    show('wizard')
+    regenCode()
+    $('#ver').textContent = 'v' + st.version
+  } else {
+    enterMain()
+  }
+})()
+</script>
+</body>
+</html>

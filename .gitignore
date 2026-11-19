@@ -1,6 +1,11 @@
 selfhost/runtime/
 selfhost/package/
 selfhost/*.zip
+selfhost/dist/
+panel/release/
+panel/bundle/
+panel/node_modules/
+panel/ui-check.js
 .wrangler/
 .dev.vars
 node_modules/
