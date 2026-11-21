@@ -15,6 +15,9 @@
       "database_id": "e898b602-f68c-42f7-834b-e589b81d28c3"
     }
   ],
+  "ai": {
+    "binding": "AI"
+  },
   "durable_objects": {
     "bindings": [
       { "name": "CHAT", "class_name": "ClassChatDO" }

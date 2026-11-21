@@ -43,6 +43,9 @@ if (fs.existsSync(configPath)) {
     vapidPublicKey: '',
     vapidPrivateKey: '',
     vapidSubject: '',
+    aiApiKey: '',
+    aiBaseUrl: '',
+    aiModel: '',
   }
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2))
   console.log('[config] 已生成默认 config.json，请查看其中的引导码')
@@ -66,6 +69,10 @@ const env = {
   VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY || config.vapidPublicKey || undefined,
   VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY || config.vapidPrivateKey || undefined,
   VAPID_SUBJECT: config.vapidSubject || undefined,
+  // AI（OpenAI 兼容自配；留空 = AI 功能整体隐藏；无 Workers AI 兜底）
+  AI_API_KEY: process.env.ARK_AI_API_KEY || config.aiApiKey || undefined,
+  AI_BASE_URL: process.env.ARK_AI_BASE_URL || config.aiBaseUrl || undefined,
+  AI_MODEL: config.aiModel || undefined,
 }
 
 const app = createApp()

@@ -7,6 +7,16 @@ export interface Env {
   VAPID_PUBLIC_KEY?: string
   VAPID_PRIVATE_KEY?: string
   VAPID_SUBJECT?: string
+  /** AI 能力：自配 OpenAI 兼容接口（key+baseUrl 必配）优先，Workers AI binding 兜底；未配置时 AI 功能整体隐藏 */
+  AI_API_KEY?: string
+  AI_BASE_URL?: string
+  AI_MODEL?: string
+  AI?: WorkersAiBinding
+}
+
+/** Workers AI binding 的最小接口（wrangler.jsonc 的 ai.binding 注入） */
+export interface WorkersAiBinding {
+  run: (model: string, input: Record<string, unknown>) => Promise<unknown>
 }
 
 export interface SessionUser {
