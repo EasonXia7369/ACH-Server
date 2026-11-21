@@ -56,10 +56,11 @@ export async function collectReport(db: D1Database, classId: number, from: strin
     if (!seen.has(key)) {
       seen.add(key)
       if (CNT.includes(r.status)) {
+        const k = r.status as (typeof CNT)[number]
         agg[r.status]++
         agg.total++
         const d = dayBucket(r.day)
-        d[r.status]++
+        d[k]++
         d.flagged.add(r.student_id)
         dayAgg.set(r.day, d)
       }
