@@ -2,14 +2,17 @@ import { Hono } from 'hono'
 import dayjs from 'dayjs'
 import type { AppContext } from '../types.js'
 import { authenticate, requireRole } from '../auth.js'
-import { aiEnabled, aiComplete, extractJson, AiError } from '../ai.js'
+import { resolveAiConfig, aiComplete, aiCompleteWith, extractJson, AiError } from '../ai.js'
 import { collectReport } from './reports.js'
 import { maskName } from './parent.js'
 
 export const aiRoutes = new Hono<AppContext>()
 
 /** AI 能力开关状态（前端据此显示/隐藏入口）。 */
-aiRoutes.get('/api/ai/status', authenticate, (c) => c.json({ enabled: aiEnabled(c.env) }))
+aiRoutes.get('/api/ai/status', authenticate, async (c) => {
+  const cfg = await resolveAiConfig(c.env, c.env.DB)
+  return c.json({ enabled: cfg.kind !== 'none' })
+})
 
 /** 把 "张三（2026-01-05 事由）" 这类复合串的姓名部分脱敏。 */
 function maskLeaveName(s: string): string {
@@ -23,7 +26,8 @@ aiRoutes.post(
   authenticate,
   requireRole('teacher', 'admin'),
   async (c) => {
-    if (!aiEnabled(c.env)) return c.json({ error: 'AI 未配置' }, 503)
+    if (!(await resolveAiConfig(c.env, c.env.DB)).kind.match(/^(custom|workers)$/))
+      return c.json({ error: 'AI 未配置' }, 503)
     const classId = Number(c.req.param('id'))
     const { from, to } = await c.req.json<{ from?: string; to?: string }>()
     const f = from && /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : dayjs().subtract(6, 'day').format('YYYY-MM-DD')
@@ -42,6 +46,7 @@ aiRoutes.post(
     try {
       const text = await aiComplete(
         c.env,
+        c.env.DB,
         '你是学校班级管理系统的班主任助手。请根据用户提供的脱敏数据（学生姓名已脱敏为"姓+拼音首字母"）写一段班级周总结。要求：1) 全中文，150~300 字；2) 语气客观温和，面向班主任，可整段复制发到家长群；3) 概括出勤整体情况，点名需要关注的异常（请假/迟到/作业未交集中情况，引用脱敏姓名）；4) 只使用给出的数据，绝不编造；5) 结尾加一句给家长的提醒或鼓励。直接输出正文，不要标题，不要分点符号。',
         JSON.stringify(data),
         { maxTokens: 700 },
@@ -60,7 +65,8 @@ aiRoutes.post(
   authenticate,
   requireRole('teacher', 'admin'),
   async (c) => {
-    if (!aiEnabled(c.env)) return c.json({ error: 'AI 未配置' }, 503)
+    if (!(await resolveAiConfig(c.env, c.env.DB)).kind.match(/^(custom|workers)$/))
+      return c.json({ error: 'AI 未配置' }, 503)
     const classId = Number(c.req.param('id'))
     const since = dayjs().subtract(29, 'day').format('YYYY-MM-DD')
     const today = dayjs().format('YYYY-MM-DD')
@@ -110,6 +116,7 @@ aiRoutes.post(
     try {
       const text = await aiComplete(
         c.env,
+        c.env.DB,
         '你是班级考勤数据分析助手。根据用户提供的近 30 天脱敏考勤数据，找出值得班主任关注的模式（如连续迟到、频繁请假、旷课集中在某几天、违纪反复等）。要求：1) 输出 JSON 数组，2~4 条，每条形如 {"level":"info"或"warn","text":"一句话洞察+一句可操作建议"}；2) 全中文，每条不超过 60 字；3) 只基于给出的数据，绝不编造；4) 不要列出没有异常的学生。直接输出 JSON 数组，不要多余文字。',
         JSON.stringify(data),
         { maxTokens: 500 },
@@ -126,3 +133,100 @@ aiRoutes.post(
     }
   },
 )
+
+/* ---------- AI 设置（管理页；平台管理员） ---------- */
+
+/** key 掩码：只露出末 4 位。 */
+function maskKey(key: string): string {
+  if (key.length <= 8) return '****'
+  return `****${key.slice(-4)}`
+}
+
+/** 当前生效配置概览（admin）：apiKey 只回显掩码，绝不回传明文。 */
+aiRoutes.get('/api/ai/config', authenticate, requireRole('admin'), async (c) => {
+  const cfg = await resolveAiConfig(c.env, c.env.DB)
+  let dbCfg: { apiKey?: string; baseUrl?: string; model?: string } | null = null
+  try {
+    const row = await c.env.DB.prepare('SELECT value FROM settings WHERE key = ?1').bind('ai').first<{ value: string }>()
+    dbCfg = row ? JSON.parse(row.value) : null
+  } catch {
+    dbCfg = null
+  }
+  return c.json({
+    enabled: cfg.kind !== 'none',
+    source: cfg.source ?? cfg.kind,
+    workersAiAvailable: !!c.env.AI,
+    custom: {
+      hasKey: !!(cfg.kind === 'custom' && cfg.apiKey),
+      keyMask: cfg.kind === 'custom' && cfg.apiKey ? maskKey(cfg.apiKey) : null,
+      baseUrl: dbCfg?.baseUrl ?? (cfg.source === 'env' ? cfg.baseUrl : '') ?? '',
+      model: dbCfg?.model ?? (cfg.source === 'env' ? cfg.model : '') ?? '',
+    },
+  })
+})
+
+/** 保存 AI 配置（admin）：apiKey 留空 = 保留已存值；baseUrl 留空 = 清除自配（回落 Workers AI/关闭）。 */
+aiRoutes.put('/api/ai/config', authenticate, requireRole('admin'), async (c) => {
+  const { apiKey, baseUrl, model } = await c.req.json<{ apiKey?: string; baseUrl?: string; model?: string }>()
+
+  // 现有配置（apiKey 留空时保留）
+  let existing: { apiKey?: string; baseUrl?: string; model?: string } = {}
+  try {
+    const row = await c.env.DB.prepare('SELECT value FROM settings WHERE key = ?1').bind('ai').first<{ value: string }>()
+    existing = row ? JSON.parse(row.value) : {}
+  } catch {
+    existing = {}
+  }
+
+  const b = (baseUrl ?? '').trim()
+  const m = (model ?? '').trim()
+  const k = (apiKey ?? '').trim() || existing.apiKey || ''
+
+  // baseUrl 为空 → 清除自配配置
+  if (!b) {
+    await c.env.DB.prepare('DELETE FROM settings WHERE key = ?1').bind('ai').run()
+    const cfg = await resolveAiConfig(c.env, c.env.DB)
+    return c.json({ ok: true, cleared: true, enabled: cfg.kind !== 'none', source: cfg.source ?? cfg.kind })
+  }
+
+  if (!k) return c.json({ error: 'API Key 必填（或保留已配置的 key）' }, 400)
+  if (m && !/^[\w.\-/]{1,80}$/.test(m)) return c.json({ error: '模型名格式不对' }, 400)
+
+  const value = JSON.stringify({ apiKey: k, baseUrl: b, model: m || 'deepseek-chat' })
+  await c.env.DB.prepare(
+    'INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value',
+  )
+    .bind('ai', value)
+    .run()
+  const cfg = await resolveAiConfig(c.env, c.env.DB)
+  return c.json({ ok: true, enabled: cfg.kind !== 'none', source: cfg.source ?? cfg.kind })
+})
+
+/** 测试连通性：用表单当前值（apiKey 留空则用已存 key）发起一次真实补全。 */
+aiRoutes.post('/api/ai/config/test', authenticate, requireRole('admin'), async (c) => {
+  const { apiKey, baseUrl, model } = await c.req.json<{ apiKey?: string; baseUrl?: string; model?: string }>()
+  const b = (baseUrl ?? '').trim()
+  const m = (model ?? '').trim()
+  let k = (apiKey ?? '').trim()
+  if (!k) {
+    try {
+      const row = await c.env.DB.prepare('SELECT value FROM settings WHERE key = ?1').bind('ai').first<{ value: string }>()
+      k = row ? (JSON.parse(row.value).apiKey ?? '') : ''
+    } catch {
+      k = ''
+    }
+  }
+  if (!b || !k) return c.json({ error: '请先填写 Base URL 和 API Key' }, 400)
+
+  try {
+    const text = await aiCompleteWith(
+      { kind: 'custom', apiKey: k, baseUrl: b, model: m || 'deepseek-chat' },
+      '你是连通性测试器。',
+      '请只回复两个字：正常',
+      { maxTokens: 20, timeoutMs: 20000 },
+    )
+    return c.json({ ok: true, sample: text.slice(0, 50) })
+  } catch (e: any) {
+    return c.json({ ok: false, error: e instanceof AiError ? e.message : 'AI 调用失败' }, 200)
+  }
+})

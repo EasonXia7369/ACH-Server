@@ -225,17 +225,34 @@ parentRoutes.get('/api/parent-lookup-code', async (c) => {
   return c.json({ key: cls.parent_key, class_name: cls.name })
 })
 
-/** 家长留言对话串（公开，凭 parent_key）：家长留言 + 老师回复，增量 ?after=<id>。 */
+/**
+ * 家长留言对话串（公开，凭 parent_key + ?no=学号）。
+ * 隐私：只返回绑定孩子相关的消息——孩子家长发的留言 + 针对这些留言的老师回复（含引用摘要）。
+ * 其他家长的留言与无关回复一律不可见。未绑定（无 no）返回空串。
+ */
 parentRoutes.get('/api/parent/:key/messages', async (c) => {
   const cls = await classByKey(c, c.req.param('key'))
   if (!cls) return c.json({ error: '链接无效' }, 404)
+  const no = (c.req.query('no') ?? '').trim()
+  if (!no) return c.json({ messages: [] })
+  const stu = await c.env.DB
+    .prepare('SELECT id FROM students WHERE class_id = ?1 AND student_no = ?2 AND active = 1')
+    .bind(cls.id, no)
+    .first<{ id: number }>()
+  if (!stu) return c.json({ error: '学号不存在或已失效', messages: [] }, 404)
   const after = Number(c.req.query('after') ?? 0) || 0
   const rows = (
     await c.env.DB.prepare(
-      `SELECT id, sender_type, sender_name, body, created_at
-       FROM parent_messages WHERE class_id = ?1 AND id > ?2 AND deleted = 0 ORDER BY id ASC LIMIT 300`,
+      `SELECT m.id, m.sender_type, m.sender_name, m.body, m.created_at, m.reply_to,
+              rt.sender_name AS reply_name, rt.body AS reply_body
+       FROM parent_messages m
+       LEFT JOIN parent_messages rt ON rt.id = m.reply_to AND rt.deleted = 0
+       WHERE m.class_id = ?1 AND m.deleted = 0 AND m.id > ?2
+         AND (m.actor_student_id = ?3
+              OR m.reply_to IN (SELECT id FROM parent_messages WHERE actor_student_id = ?3))
+       ORDER BY m.id ASC LIMIT 300`,
     )
-      .bind(cls.id, after)
+      .bind(cls.id, after, stu.id)
       .all<any>()
   ).results.map((r) => ({ ...r, created_at: isoTs(r.created_at) }))
   return c.json({ messages: rows })

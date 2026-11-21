@@ -418,7 +418,7 @@ examRoutes.get('/api/parent/:key/exams', async (c) => {
 
 /* ---------- AI：考试总结 / 个人点评 / 智能导入（教师手动触发） ---------- */
 
-import { aiEnabled, aiComplete, extractJson, AiError } from '../ai.js'
+import { resolveAiConfig, aiComplete, extractJson, AiError } from '../ai.js'
 
 /** AI 考试总结：结构化分块（整体/强项/弱项/需关注/建议），学生姓名脱敏出域。 */
 examRoutes.post(
@@ -426,7 +426,8 @@ examRoutes.post(
   authenticate,
   requireRole('teacher', 'admin'),
   async (c) => {
-    if (!aiEnabled(c.env)) return c.json({ error: 'AI 未配置' }, 503)
+    const cfg = await resolveAiConfig(c.env, c.env.DB)
+    if (cfg.kind === 'none') return c.json({ error: 'AI 未配置' }, 503)
     const classId = Number(c.req.param('id'))
     const eid = Number(c.req.param('eid'))
     const detail = await buildExamDetail(c.env.DB, classId, eid)
@@ -461,6 +462,7 @@ examRoutes.post(
     try {
       const text = await aiComplete(
         c.env,
+        c.env.DB,
         '你是班级考试分析助手。根据用户提供的脱敏考试统计，输出 JSON：{"overall":"2~3 句整体表现","strengths":["强项科目及表现",1~3条],"weaknesses":["薄弱科目或问题",1~3条],"attention":[{"name":"脱敏姓名","reason":"一句话原因"}],"actions":["给老师的建议动作",1~3条]}。要求：全中文；只基于数据绝不编造；attention 最多 3 人（明显低于班级均分或多科缺考）；overall 面向班主任。直接输出 JSON，不要多余文字。',
         JSON.stringify(data),
         { maxTokens: 800 },
@@ -512,7 +514,8 @@ examRoutes.post(
   authenticate,
   requireRole('teacher', 'admin'),
   async (c) => {
-    if (!aiEnabled(c.env)) return c.json({ error: 'AI 未配置' }, 503)
+    const cfg = await resolveAiConfig(c.env, c.env.DB)
+    if (cfg.kind === 'none') return c.json({ error: 'AI 未配置' }, 503)
     const classId = Number(c.req.param('id'))
     const eid = Number(c.req.param('eid'))
     const { student_id, extra_note } = await c.req.json<{ student_id?: number; extra_note?: string }>()
@@ -572,6 +575,7 @@ examRoutes.post(
     try {
       const text = await aiComplete(
         c.env,
+        c.env.DB,
         '你是班主任。请根据数据为学生写一段发给家长的考试成绩评语。要求：1) 全中文 80~150 字；2) 直接称呼学生姓名；3) 结构：先肯定亮点或进步（对照班级均分与历次趋势），再指出薄弱科目，最后给一句可操作的建议；4) 语气温和具体、不空话套话，只基于数据不编造；5) 若有老师补充说明请自然融入。直接输出评语正文，不要引号和标题。',
         JSON.stringify(data),
         { maxTokens: 400 },
@@ -621,7 +625,8 @@ examRoutes.post(
   authenticate,
   requireRole('teacher', 'admin'),
   async (c) => {
-    if (!aiEnabled(c.env)) return c.json({ error: 'AI 未配置' }, 503)
+    const cfg = await resolveAiConfig(c.env, c.env.DB)
+    if (cfg.kind === 'none') return c.json({ error: 'AI 未配置' }, 503)
     const classId = Number(c.req.param('id'))
     const eid = Number(c.req.param('eid'))
     const exam = await examOfClass(c.env.DB, classId, eid)
@@ -681,6 +686,7 @@ examRoutes.post(
     try {
       const out = await aiComplete(
         c.env,
+        c.env.DB,
         '你是成绩单解析器。用户会给一段格式任意的考试成绩单原文（可能来自 Excel 复制、CSV、手排文字，列顺序不定、可能有备注/统计/表头行）。请解析并输出 JSON：{"subjects":[{"subject":"科目名","full":满分数字}],"rows":[{"name":"学生姓名","scores":{"科目":分数或null}}]}。要求：1) 科目名尽量与考试科目对齐：' +
           JSON.stringify(exam.subjects.map((s) => s.subject)) +
           '（对不上的用原文科目名）；2) 满分从列头推断（如"语文(150)"→150），否则 100；3) 忽略表头行、合计/平均分等统计行；4) 分数必须是数字或缺考标记 null；5) 学生姓名保留原文写法。直接输出 JSON，不要多余文字。',

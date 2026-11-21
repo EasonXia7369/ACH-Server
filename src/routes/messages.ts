@@ -309,7 +309,20 @@ interface ParentMsg {
   sender_name: string
   body: string
   created_at: string
+  /** 老师回复引用的目标留言 id（家长留言无此字段） */
+  reply_to?: number | null
+  /** 引用目标摘要（回复留言的家长署名 + 原文，前端渲染引用块） */
+  reply_name?: string | null
+  reply_body?: string | null
 }
+
+/** 详情查询公共列：引用目标留言的署名与原文。 */
+const PARENT_MSG_SELECT = `
+  SELECT m.id, m.sender_type, m.sender_name, m.body, m.created_at, m.reply_to,
+         rt.sender_name AS reply_name, rt.body AS reply_body
+  FROM parent_messages m
+  LEFT JOIN parent_messages rt ON rt.id = m.reply_to AND rt.deleted = 0
+`
 
 function parentMsgShape(r: any): ParentMsg {
   return {
@@ -318,6 +331,9 @@ function parentMsgShape(r: any): ParentMsg {
     sender_name: r.sender_name,
     body: r.body,
     created_at: isoTs(r.created_at),
+    reply_to: r.reply_to ?? null,
+    reply_name: r.reply_name ?? null,
+    reply_body: r.reply_body ?? null,
   }
 }
 
@@ -332,8 +348,8 @@ messageRoutes.get(
     const after = Number(c.req.query('after') ?? 0) || 0
     const rows = (
       await c.env.DB.prepare(
-        `SELECT id, sender_type, sender_name, body, created_at
-         FROM parent_messages WHERE class_id = ?1 AND id > ?2 AND deleted = 0 ORDER BY id ASC LIMIT 300`,
+        `${PARENT_MSG_SELECT}
+         WHERE m.class_id = ?1 AND m.id > ?2 AND m.deleted = 0 ORDER BY m.id ASC LIMIT 300`,
       )
         .bind(classId, after)
         .all<any>()
@@ -351,10 +367,22 @@ messageRoutes.post(
     const sender = await resolveSender(c, classId)
     if (!sender) return c.json({ error: '无权访问该班级消息' }, 403)
     if (sender.role === 'student') return c.json({ error: '只有老师能回复家长留言' }, 403)
-    const { body } = await c.req.json<{ body?: string }>()
-    const text = (body ?? '').trim()
+    const payload = await c.req.json<{ body?: string; reply_to?: number }>()
+    const text = (payload.body ?? '').trim()
     if (!text) return c.json({ error: '回复内容不能为空' }, 400)
     if (text.length > MAX_TEXT) return c.json({ error: '回复最长 500 字' }, 400)
+
+    // 必须引用：回复必须针对某条家长留言（家长端按孩子过滤后，未引用的回复将无人可见）
+    const rtId = Number(payload.reply_to ?? 0) || 0
+    if (!rtId) return c.json({ error: '请先点击某条留言的「回复」，针对该留言回复' }, 400)
+    const target = await c.env.DB
+      .prepare(
+        `SELECT id, sender_name, body, actor_student_id FROM parent_messages
+         WHERE id = ?1 AND class_id = ?2 AND deleted = 0 AND sender_type = 'parent'`,
+      )
+      .bind(rtId, classId)
+      .first<{ id: number; sender_name: string; body: string; actor_student_id: number | null }>()
+    if (!target) return c.json({ error: '引用的留言不存在或已删除' }, 400)
 
     const name = await c.env.DB.prepare('SELECT name FROM users WHERE id = ?1')
       .bind(sender.userId)
@@ -362,10 +390,10 @@ messageRoutes.post(
     const senderName = name?.name ?? '老师'
 
     const ins = await c.env.DB.prepare(
-      `INSERT INTO parent_messages (class_id, sender_type, sender_name, user_id, body)
-       VALUES (?1, 'teacher', ?2, ?3, ?4)`,
+      `INSERT INTO parent_messages (class_id, sender_type, sender_name, user_id, body, reply_to)
+       VALUES (?1, 'teacher', ?2, ?3, ?4, ?5)`,
     )
-      .bind(classId, senderName, sender.userId, text)
+      .bind(classId, senderName, sender.userId, text, rtId)
       .run()
     const id = ins.meta.last_row_id as number
     const created = await c.env.DB.prepare('SELECT created_at FROM parent_messages WHERE id = ?1')
@@ -377,6 +405,9 @@ messageRoutes.post(
       sender_name: senderName,
       body: text,
       created_at: isoTs(created?.created_at),
+      reply_to: rtId,
+      reply_name: target.sender_name,
+      reply_body: target.body,
     }
     await broadcast(c.env, classId, { type: 'parent-message', message })
     return c.json({ message })
