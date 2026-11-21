@@ -52,7 +52,7 @@ parentRoutes.get('/api/parent/:key', async (c) => {
 
   const mask = (name: string) => maskName(name)
 
-  // 绑定孩子：仅凭学号（唯一凭据）。命中才返回出勤数据。
+  // 绑定孩子：仅凭学号（唯一凭据）。未绑定 → 全班脱敏视图；绑定 → 仅该孩子的个人化视图
   const no = (c.req.query('no') ?? '').trim()
   let bound: { id: number; name: string } | null = null
   if (no) {
@@ -83,7 +83,14 @@ parentRoutes.get('/api/parent/:key', async (c) => {
           .bind(classId, today, bound.id)
           .all<any>()
           .then((r) => r.results)
-      : Promise.resolve([] as any[]),
+      : c.env.DB
+          .prepare(
+            `SELECT a.student_id, a.slot, a.status, a.note FROM attendance a
+             WHERE a.class_id = ?1 AND a.day = ?2`,
+          )
+          .bind(classId, today)
+          .all<any>()
+          .then((r) => r.results),
     c.env.DB
       .prepare(
         `SELECT period, subject, teacher FROM timetable
@@ -102,13 +109,18 @@ parentRoutes.get('/api/parent/:key', async (c) => {
       .bind(classId)
       .all<any>()
   ).results
-  const att = attendance.map((r: any) => ({
-    slot: r.slot,
-    status: r.status,
-    note: r.note,
-  }))
+  const att = attendance.map((r: any) => {
+    const stu = students.find((s: any) => s.id === r.student_id)
+    return {
+      student: stu ? mask(stu.name) : '?', // 未绑定的全班视图姓名脱敏；个人化视图孩子名单条展示
+      slot: r.slot,
+      status: r.status,
+      note: r.note,
+    }
+  })
 
-  // 本周统计（个人化：仅绑定的孩子）
+  // 本周统计：未绑定 → 全班每生一行（脱敏）；绑定 → 仅该孩子
+  const CNT = ['leave', 'late', 'absent', 'violate'] as const
   let weekly: Array<Record<string, any>> = []
   if (bound) {
     const rows = (
@@ -119,7 +131,6 @@ parentRoutes.get('/api/parent/:key', async (c) => {
         .bind(classId, bound.id, mon, today)
         .all<any>()
     ).results
-    const CNT = ['leave', 'late', 'absent', 'violate'] as const
     const a: Record<(typeof CNT)[number], number> = { leave: 0, late: 0, absent: 0, violate: 0 }
     const seen = new Set<string>()
     for (const r of rows) {
@@ -131,6 +142,31 @@ parentRoutes.get('/api/parent/:key', async (c) => {
       }
     }
     weekly = [{ student: bound.name, ...a }]
+  } else {
+    const rows = (
+      await c.env.DB.prepare(
+        `SELECT student_id, day, status FROM attendance
+         WHERE class_id = ?1 AND day >= ?2 AND day <= ?3`,
+      )
+        .bind(classId, mon, today)
+        .all<any>()
+    ).results
+    const agg = new Map<number, Record<string, number>>()
+    const seen = new Set<string>()
+    for (const r of rows) {
+      const a = agg.get(r.student_id) ?? { leave: 0, late: 0, absent: 0, violate: 0 }
+      const k = `${r.student_id}|${r.day}|${r.status}`
+      if (!seen.has(k)) {
+        seen.add(k)
+        const st = r.status as (typeof CNT)[number]
+        if (CNT.includes(st)) a[st]++
+      }
+      agg.set(r.student_id, a)
+    }
+    weekly = students.map((s: any) => {
+      const a = agg.get(s.id) ?? { leave: 0, late: 0, absent: 0, violate: 0 }
+      return { student: mask(s.name), ...a }
+    })
   }
 
   return c.json({
