@@ -17,6 +17,8 @@ export interface ClassReport {
   leave_names: string[]
   leaves: Array<{ from_day: string; to_day: string; name: string; reason: string }>
   homework: Array<{ name: string; count: number; detail: string[] }>
+  /** 按日出勤序列（仅有记录的日子；rate = 1 - 当日异常人数占比，出勤未落盘按满勤计） */
+  daily: Array<{ day: string; leave: number; late: number; absent: number; violate: number; rate: number }>
 }
 
 /**
@@ -43,6 +45,10 @@ export async function collectReport(db: D1Database, classId: number, from: strin
   const seen = new Set<string>()
   const violations: Array<{ day: string; name: string; slot: string; note: string }> = []
   const leaveNames = new Set<string>()
+  // 按日聚合：day -> 各状态当日人数（同日同状态只算 1 次）+ 当日异常学生数
+  const dayAgg = new Map<string, { leave: number; late: number; absent: number; violate: number; flagged: Set<number> }>()
+  const dayBucket = (day: string) =>
+    dayAgg.get(day) ?? { leave: 0, late: 0, absent: 0, violate: 0, flagged: new Set<number>() }
 
   for (const r of attRows) {
     const agg = attAgg.get(r.student_id) ?? { leave: 0, late: 0, absent: 0, violate: 0, total: 0 }
@@ -52,6 +58,10 @@ export async function collectReport(db: D1Database, classId: number, from: strin
       if (CNT.includes(r.status)) {
         agg[r.status]++
         agg.total++
+        const d = dayBucket(r.day)
+        d[r.status]++
+        d.flagged.add(r.student_id)
+        dayAgg.set(r.day, d)
       }
     }
     attAgg.set(r.student_id, agg)
@@ -63,6 +73,18 @@ export async function collectReport(db: D1Database, classId: number, from: strin
       }
     }
   }
+
+  const total = students.length
+  const daily = [...dayAgg.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([day, d]) => ({
+      day,
+      leave: d.leave,
+      late: d.late,
+      absent: d.absent,
+      violate: d.violate,
+      rate: total ? Math.round((1 - d.flagged.size / total) * 1000) / 1000 : 1,
+    }))
 
   const attendance = students.map((s, i) => {
     const a = attAgg.get(s.id) ?? { leave: 0, late: 0, absent: 0, violate: 0, total: 0 }
@@ -120,6 +142,7 @@ export async function collectReport(db: D1Database, classId: number, from: strin
     leave_names: [...leaveNames],
     leaves,
     homework,
+    daily,
   }
 }
 
