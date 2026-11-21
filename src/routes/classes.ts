@@ -139,7 +139,7 @@ classRoutes.get('/api/classes/:id', ...reader, async (c) => {
   if (!cls) return c.json({ error: '班级不存在' }, 404)
   const students = (
     await c.env.DB.prepare(
-      'SELECT id, name, seq, pinyin_initial, active FROM students WHERE class_id = ? ORDER BY seq',
+      'SELECT id, name, seq, pinyin_initial, student_no, active FROM students WHERE class_id = ? ORDER BY seq',
     )
       .bind(cls.id)
       .all<any>()
@@ -231,6 +231,17 @@ classRoutes.put('/api/classes/:id/quote-config', ...teacher, async (c) => {
   return c.json({ config })
 })
 
+/** 生成 6 位纯数字班级码（首位 1-9），全局唯一。 */
+async function genClassCode(c: any): Promise<string> {
+  for (let i = 0; i < 10; i++) {
+    const code = String(1 + Math.floor(Math.random() * 9)) + String(Math.floor(Math.random() * 1e5)).padStart(5, '0')
+    const dup = await c.env.DB.prepare('SELECT 1 AS ok FROM classes WHERE class_code = ?1').bind(code).first()
+    if (!dup) return code
+  }
+  // 撞码极端兜底：7 位
+  return String(1 + Math.floor(Math.random() * 9)) + String(Math.floor(Math.random() * 1e6)).padStart(6, '0')
+}
+
 classRoutes.post('/api/classes/:id/parent-link', ...teacher, async (c) => {
   const classId = Number(c.req.param('id'))
   const gen = () => {
@@ -242,7 +253,21 @@ classRoutes.post('/api/classes/:id/parent-link', ...teacher, async (c) => {
   const dup = await c.env.DB.prepare('SELECT 1 AS ok FROM classes WHERE parent_key = ?1').bind(key).first()
   if (dup) key = gen()
   await c.env.DB.prepare('UPDATE classes SET parent_key = ?1 WHERE id = ?2').bind(key, classId).run()
-  return c.json({ key })
+  // 首次生成链接时顺带发班级码（已有码不变）
+  const cls = await c.env.DB.prepare('SELECT class_code FROM classes WHERE id = ?1').bind(classId).first<any>()
+  const code = cls?.class_code ?? (await genClassCode(c))
+  await c.env.DB.prepare('UPDATE classes SET class_code = ?1 WHERE id = ?2 AND class_code IS NULL')
+    .bind(code, classId)
+    .run()
+  return c.json({ key, code })
+})
+
+/** 重置班级码（独立于链接）：旧码立即失效。 */
+classRoutes.post('/api/classes/:id/class-code', ...teacher, async (c) => {
+  const classId = Number(c.req.param('id'))
+  const code = await genClassCode(c)
+  await c.env.DB.prepare('UPDATE classes SET class_code = ?1 WHERE id = ?2').bind(code, classId).run()
+  return c.json({ code })
 })
 
 /** 班主任/管理员：可添加为本班协作教师的候选列表（全部教师）。 */
@@ -403,18 +428,124 @@ classRoutes.post('/api/classes/:id/students/bulk', ...teacher, async (c) => {
   })
 })
 
+/** 学号校验：原样文本（保前导零），班级内唯一（停用学生也占用，与唯一索引一致）。 */
+async function checkStudentNo(
+  c: any,
+  classId: number,
+  studentNo: string,
+  selfId: number,
+): Promise<string | null> {
+  const dup = await c.env.DB.prepare(
+    'SELECT name FROM students WHERE class_id = ?1 AND student_no = ?2 AND id != ?3',
+  )
+    .bind(classId, studentNo, selfId)
+    .first()
+  return dup ? `学号已被 ${dup.name} 使用` : null
+}
+
 classRoutes.put('/api/classes/:id/students/:sid', ...teacher, async (c) => {
   const sid = Number(c.req.param('sid'))
+  const classId = Number(c.req.param('id'))
   const stu = await c.env.DB.prepare('SELECT * FROM students WHERE id = ? AND class_id = ?')
-    .bind(sid, Number(c.req.param('id')))
+    .bind(sid, classId)
     .first<any>()
   if (!stu) return c.json({ error: '学生不存在' }, 404)
-  const { name, active } = await c.req.json<{ name?: string; active?: boolean }>()
-  await c.env.DB.prepare('UPDATE students SET name = ?, active = ?, updated_at = ? WHERE id = ?')
-    .bind(name?.trim() ?? stu.name, active === undefined ? stu.active : active ? 1 : 0, new Date().toISOString(), sid)
+  const { name, active, student_no } = await c.req.json<{
+    name?: string
+    active?: boolean
+    student_no?: string | null
+  }>()
+
+  // 学号：undefined 保持原值；null/空串清空；字符串去空白后校验唯一
+  let nextNo = stu.student_no ?? null
+  if (student_no !== undefined) {
+    const t = (student_no ?? '').trim()
+    if (!t) {
+      nextNo = null
+    } else {
+      if (t.length > 32) return c.json({ error: '学号最长 32 字符' }, 400)
+      const err = await checkStudentNo(c, classId, t, sid)
+      if (err) return c.json({ error: err }, 400)
+      nextNo = t
+    }
+  }
+
+  await c.env.DB.prepare(
+    'UPDATE students SET name = ?, active = ?, student_no = ?, updated_at = ? WHERE id = ?',
+  )
+    .bind(
+      name?.trim() ?? stu.name,
+      active === undefined ? stu.active : active ? 1 : 0,
+      nextNo,
+      new Date().toISOString(),
+      sid,
+    )
     .run()
   const updated = await c.env.DB.prepare('SELECT * FROM students WHERE id = ?').bind(sid).first()
   return c.json({ student: updated })
+})
+
+/** 批量填学号：{ nos: [{ id, student_no }] }（student_no 传空 = 清空）。全量预检查重后一次写入。 */
+classRoutes.post('/api/classes/:id/students/numbers', ...teacher, async (c) => {
+  const classId = Number(c.req.param('id'))
+  const { nos } = await c.req.json<{ nos?: Array<{ id?: number; student_no?: string | null }> }>()
+  if (!Array.isArray(nos) || !nos.length) return c.json({ error: 'nos 不能为空' }, 400)
+  if (nos.length > 300) return c.json({ error: '单次最多 300 条' }, 400)
+
+  const students = (
+    await c.env.DB.prepare(
+      'SELECT id, name, student_no FROM students WHERE class_id = ?1',
+    )
+      .bind(classId)
+      .all<any>()
+  ).results
+  const byId = new Map(students.map((s: any) => [s.id, s]))
+
+  // 预检：提交内互查 + 与不在本次提交中的学生查
+  const seen = new Map<string, string>()
+  const errors: Array<{ id: number; error: string }> = []
+  const cleaned: Array<{ id: number; no: string | null }> = []
+  for (const item of nos) {
+    const sid = Number(item?.id ?? 0)
+    const stu = byId.get(sid)
+    if (!stu) {
+      errors.push({ id: sid, error: '学生不存在' })
+      continue
+    }
+    const t = (item?.student_no ?? '').trim()
+    if (!t) {
+      cleaned.push({ id: sid, no: null })
+      continue
+    }
+    if (t.length > 32) {
+      errors.push({ id: sid, error: '学号最长 32 字符' })
+      continue
+    }
+    const owner = seen.get(t)
+    if (owner !== undefined) {
+      errors.push({ id: sid, error: `学号与 ${owner} 重复` })
+      continue
+    }
+    const dup = await c.env.DB.prepare(
+      'SELECT name FROM students WHERE class_id = ?1 AND student_no = ?2 AND id != ?3',
+    )
+      .bind(classId, t, sid)
+      .first<{ name: string }>()
+    if (dup) {
+      errors.push({ id: sid, error: `学号已被 ${dup.name} 使用` })
+      continue
+    }
+    seen.set(t, stu.name)
+    cleaned.push({ id: sid, no: t })
+  }
+  if (errors.length) return c.json({ error: '存在冲突，未保存', errors }, 400)
+
+  for (const row of cleaned) {
+    await c.env.DB.prepare('UPDATE students SET student_no = ?, updated_at = ? WHERE id = ?')
+      .bind(row.no, new Date().toISOString(), row.id)
+      .run()
+  }
+  return c.json({ updated: cleaned.length })
 })
 
 classRoutes.put('/api/classes/:id/subjects', ...teacher, async (c) => {

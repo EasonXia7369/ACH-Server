@@ -3,6 +3,7 @@ import type { AppContext } from '../types.js'
 import { authenticate, bearerToken, canAccessClass, sessionFromToken } from '../auth.js'
 import { broadcast, broadcastRefresh } from '../realtime.js'
 import { pushClass, sideTask } from '../push.js'
+import { isoTs } from '../time.js'
 
 /** 发起操作的设备 id（X-Push-Device 头）：推送时排除发送者自己的设备 */
 function senderDevice(c: any): string | undefined {
@@ -72,7 +73,7 @@ messageRoutes.get(
       )
         .bind(classId, after, limit)
         .all<any>()
-    ).results.map((r) => ({ ...r, popup: !!r.popup }))
+    ).results.map((r) => ({ ...r, popup: !!r.popup, created_at: isoTs(r.created_at) }))
     return c.json({ messages: rows })
   },
 )
@@ -130,7 +131,7 @@ messageRoutes.post(
       has_media: false,
       media_mime: null,
       media_duration_ms: null,
-      created_at: created?.created_at ?? new Date().toISOString(),
+      created_at: isoTs(created?.created_at),
     }
     await broadcast(c.env, classId, { type: 'message', message })
     // Web Push：发给全班订阅设备（发送者自身设备除外）；不阻塞响应
@@ -232,7 +233,7 @@ messageRoutes.post(
       has_media: true,
       media_mime: mime,
       media_duration_ms: kind === 'voice' ? durationRaw : null,
-      created_at: created?.created_at ?? new Date().toISOString(),
+      created_at: isoTs(created?.created_at),
     }
     await broadcast(c.env, classId, { type: 'message', message })
     // Web Push：媒体消息只提示类型，不预览内容
@@ -295,6 +296,127 @@ messageRoutes.delete(
     await c.env.DB.prepare('UPDATE messages SET deleted = 1 WHERE id = ?').bind(msgId).run()
     await broadcast(c.env, classId, { type: 'message-deleted', id: msgId })
     await broadcastRefresh(c.env, classId, 'messages')
+    return c.json({ ok: true })
+  },
+)
+
+/* ---------- 家长留言（消息页第二个群组：家长 ↔ 老师，与班级聊天分离） ---------- */
+
+/** 家长留言公共形状（无媒体字段）。 */
+interface ParentMsg {
+  id: number
+  sender_type: 'parent' | 'teacher'
+  sender_name: string
+  body: string
+  created_at: string
+}
+
+function parentMsgShape(r: any): ParentMsg {
+  return {
+    id: r.id,
+    sender_type: r.sender_type,
+    sender_name: r.sender_name,
+    body: r.body,
+    created_at: isoTs(r.created_at),
+  }
+}
+
+/** 历史 / 增量：?after=<id>。全班可读（教师 + 学生一体机）。 */
+messageRoutes.get(
+  '/api/classes/:id/parent-messages',
+  authenticate,
+  async (c) => {
+    const classId = Number(c.req.param('id'))
+    const sender = await resolveSender(c, classId)
+    if (!sender) return c.json({ error: '无权访问该班级消息' }, 403)
+    const after = Number(c.req.query('after') ?? 0) || 0
+    const rows = (
+      await c.env.DB.prepare(
+        `SELECT id, sender_type, sender_name, body, created_at
+         FROM parent_messages WHERE class_id = ?1 AND id > ?2 AND deleted = 0 ORDER BY id ASC LIMIT 300`,
+      )
+        .bind(classId, after)
+        .all<any>()
+    ).results.map(parentMsgShape)
+    return c.json({ messages: rows })
+  },
+)
+
+/** 老师回复家长留言（仅教师/管理员；学生端只读）。body: { body: string } */
+messageRoutes.post(
+  '/api/classes/:id/parent-messages',
+  authenticate,
+  async (c) => {
+    const classId = Number(c.req.param('id'))
+    const sender = await resolveSender(c, classId)
+    if (!sender) return c.json({ error: '无权访问该班级消息' }, 403)
+    if (sender.role === 'student') return c.json({ error: '只有老师能回复家长留言' }, 403)
+    const { body } = await c.req.json<{ body?: string }>()
+    const text = (body ?? '').trim()
+    if (!text) return c.json({ error: '回复内容不能为空' }, 400)
+    if (text.length > MAX_TEXT) return c.json({ error: '回复最长 500 字' }, 400)
+
+    const name = await c.env.DB.prepare('SELECT name FROM users WHERE id = ?1')
+      .bind(sender.userId)
+      .first<{ name: string }>()
+    const senderName = name?.name ?? '老师'
+
+    const ins = await c.env.DB.prepare(
+      `INSERT INTO parent_messages (class_id, sender_type, sender_name, user_id, body)
+       VALUES (?1, 'teacher', ?2, ?3, ?4)`,
+    )
+      .bind(classId, senderName, sender.userId, text)
+      .run()
+    const id = ins.meta.last_row_id as number
+    const created = await c.env.DB.prepare('SELECT created_at FROM parent_messages WHERE id = ?1')
+      .bind(id)
+      .first<{ created_at: string }>()
+    const message: ParentMsg = {
+      id,
+      sender_type: 'teacher',
+      sender_name: senderName,
+      body: text,
+      created_at: isoTs(created?.created_at),
+    }
+    await broadcast(c.env, classId, { type: 'parent-message', message })
+    return c.json({ message })
+  },
+)
+
+/** 删除家长留言（软删除，仅教师/管理员；家长端删除不开放）。 */
+messageRoutes.delete(
+  '/api/classes/:id/parent-messages/:msgId',
+  authenticate,
+  async (c) => {
+    const classId = Number(c.req.param('id'))
+    const user = c.get('user')!
+    const msgId = Number(c.req.param('msgId'))
+    const row = await c.env.DB
+      .prepare('SELECT id FROM parent_messages WHERE id = ?1 AND class_id = ?2 AND deleted = 0')
+      .bind(msgId, classId)
+      .first()
+    if (!row) return c.json({ error: '留言不存在' }, 404)
+
+    let allowed = false
+    if (user.role === 'admin') {
+      allowed = true
+    } else if (user.role === 'teacher') {
+      const ok = await c.env.DB
+        .prepare(
+          `SELECT 1 AS ok WHERE EXISTS (
+           SELECT 1 FROM classes WHERE id = ?1 AND teacher_id = ?2
+         ) OR EXISTS (
+           SELECT 1 FROM class_teachers WHERE class_id = ?1 AND user_id = ?2
+         )`,
+        )
+        .bind(classId, user.userId)
+        .first()
+      allowed = !!ok
+    }
+    if (!allowed) return c.json({ error: '无权删除该留言' }, 403)
+
+    await c.env.DB.prepare('UPDATE parent_messages SET deleted = 1 WHERE id = ?').bind(msgId).run()
+    await broadcast(c.env, classId, { type: 'parent-message-deleted', id: msgId })
     return c.json({ ok: true })
   },
 )

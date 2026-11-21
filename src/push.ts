@@ -262,6 +262,7 @@ async function sendOne(
 /**
  * 班级推送扇出：本班学生订阅 + 该班（班主任/协作教师）订阅 + 全部管理员订阅。
  * excludeDeviceId：发起操作的设备自身不收（避免自己操作自己被提醒）。
+ * teachersOnly：仅教师/管理员订阅（家长留言提醒不落到教室一体机上）。
  * 单条失败不影响其他订阅；死订阅自动清理。
  */
 export async function pushClass(
@@ -269,20 +270,21 @@ export async function pushClass(
   classId: number,
   payload: Omit<PushPayload, 'classId' | 'url'> & { url?: string },
   excludeDeviceId?: string,
+  opts?: { teachersOnly?: boolean },
 ): Promise<void> {
   if (!pushEnabled(env) || !classId) return
   try {
     const subs = (
       await env.DB.prepare(
         `SELECT id, device_id, endpoint, p256dh, auth FROM push_subscriptions
-         WHERE (role = 'student' AND class_id = ?1)
+         WHERE (role = 'student' AND class_id = ?1 AND ?2 = 0)
             OR (user_id IN (
                  SELECT teacher_id FROM classes WHERE id = ?1
                  UNION SELECT user_id FROM class_teachers WHERE class_id = ?1
                ))
             OR (role = 'admin')`,
       )
-        .bind(classId)
+        .bind(classId, opts?.teachersOnly ? 1 : 0)
         .all<any>()
     ).results
 
