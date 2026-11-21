@@ -114,9 +114,16 @@ export async function aiCompleteWith(
       },
       timeoutMs,
     )
-    const text = data?.choices?.[0]?.message?.content
-    if (typeof text !== 'string' || !text.trim()) throw new AiError('AI 未返回内容')
-    return text.trim()
+    const choice = data?.choices?.[0]
+    const text: unknown = choice?.message?.content
+    if (typeof text !== 'string' || !text.trim()) {
+      // 空响应诊断：推理模型可能把正文放在 reasoning_content，或 finish_reason=length/被限流
+      const reason = choice?.finish_reason ?? data?.error?.code ?? data?.error?.message
+      console.error('[ai] custom empty response:', JSON.stringify(data).slice(0, 500))
+      const hint = choice?.message?.reasoning_content ? '（模型返回了 reasoning_content 但 content 为空，可能是推理类模型，请换非推理模型或加大 maxTokens）' : ''
+      throw new AiError(`AI 未返回内容${reason ? `（finish: ${reason}）` : ''}${hint}`)
+    }
+    return (text as string).trim()
   }
 
   // Workers AI 兜底（cfg.binding 由 aiComplete 注入 env.AI）
@@ -127,7 +134,10 @@ export async function aiCompleteWith(
     max_tokens: maxTokens,
   })) as unknown
   const text = (out as any)?.response ?? (out as any)?.result?.response ?? (typeof out === 'string' ? out : '')
-  if (typeof text !== 'string' || !text.trim()) throw new AiError('AI 未返回内容')
+  if (typeof text !== 'string' || !text.trim()) {
+    console.error('[ai] workers empty response:', JSON.stringify(out).slice(0, 500))
+    throw new AiError('AI 未返回内容')
+  }
   return text.trim()
 }
 
