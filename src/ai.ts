@@ -100,16 +100,21 @@ export async function aiCompleteWith(
 
   if (cfg.kind === 'custom') {
     const base = (cfg.baseUrl ?? '').replace(/\/+$/, '')
+    const model = opts?.model ?? cfg.model ?? 'deepseek-chat'
+    // DeepSeek V3.2+ 思考模式默认打开且推理计入 max_tokens，小额度补全会只剩空 content。
+    // 官方 OpenAI 格式关闭方式：{"thinking": {"type": "disabled"}}；仅对 DeepSeek 系附带，避免其他供应商拒收未知参数。
+    const isDeepSeek = /deepseek/i.test(model) || /deepseek/i.test(base)
     const data = await fetchJson(
       `${base}/chat/completions`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
         body: JSON.stringify({
-          model: opts?.model ?? cfg.model ?? 'deepseek-chat',
+          model,
           messages,
           max_tokens: maxTokens,
           temperature: 0.5,
+          ...(isDeepSeek ? { thinking: { type: 'disabled' } } : {}),
         }),
       },
       timeoutMs,
