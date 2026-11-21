@@ -1,7 +1,7 @@
 {
   "name": "ark-panel",
   "productName": "ArkClassHub服务面板",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "方舟班级中心 · 学校服务器服务面板（托盘宿主 + 管理）",
   "main": "main.js",

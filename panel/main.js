@@ -61,6 +61,11 @@ function defaultConfig() {
     vapidPublicKey: '',
     vapidPrivateKey: '',
     vapidSubject: '',
+    // AI 能力（考试 AI 点评等）：OpenAI 兼容接口。优先级：网页管理页「AI 设置」（存数据库）> 此处（部署级）。
+    // 对应业务服务 config.json 的 aiApiKey/aiBaseUrl/aiModel，entry.mjs 映射为 Env。
+    aiBaseUrl: '',
+    aiApiKey: '',
+    aiModel: '',
     httpsEnabled: false,
     httpsPort: 8443,
     wizardDone: false,
@@ -720,9 +725,15 @@ function registerIpc() {
   ipcMain.handle('panel:save-config', (_e, patch) => {
     const prevPort = servicePort()
     const prevHttps = !!config.httpsEnabled
+    // AI 配置随服务进程 env 注入，变更后需重启服务才生效
+    const aiKeys = ['aiBaseUrl', 'aiApiKey', 'aiModel']
+    const aiChanged = serviceState === 'running' && aiKeys.some((k) => k in patch && patch[k] !== config[k])
     saveConfig(patch)
     // 端口/HTTPS 变更 → 热应用
     if (Number(patch.port) && Number(patch.port) !== prevPort && serviceState === 'running') {
+      restartService()
+    } else if (aiChanged) {
+      appendLog('AI 配置已更新，正在重启班级服务以生效…')
       restartService()
     }
     if (!!patch.httpsEnabled !== prevHttps || (patch.httpsEnabled && Number(patch.httpsPort) !== config.httpsPort)) {

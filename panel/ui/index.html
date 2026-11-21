@@ -208,6 +208,13 @@
       <label class="fl">Web Push VAPID（选填，HTTPS 下生效；格式同 wrangler secret）</label>
       <input type="text" id="cf-vpub" placeholder="VAPID_PUBLIC_KEY" style="width: 100%" />
       <input type="text" id="cf-vpriv" placeholder="VAPID_PRIVATE_KEY" style="width: 100%; margin-top: 6px" />
+      <label class="fl">AI 能力（选填，考试 AI 点评等；OpenAI 兼容接口）</label>
+      <input type="text" id="cf-ai-url" placeholder="Base URL，如 https://api.openai.com/v1" style="width: 100%" />
+      <input type="text" id="cf-ai-key" placeholder="API Key（sk-…，仅存本机 config.json）" style="width: 100%; margin-top: 6px" />
+      <input type="text" id="cf-ai-model" placeholder="模型名（选填，如 gpt-4o-mini / qwen-plus）" style="width: 100%; margin-top: 6px" />
+      <p class="hint" style="margin-top: 6px">
+        优先级：网页管理页「AI 设置」（按班级账号存数据库）&gt; 此处（整机部署级）。都不填则 AI 点评不可用，其余功能不受影响。
+      </p>
       <div class="row" style="margin-top: 16px">
         <button class="btn primary" id="cf-save">保存配置</button>
         <button class="btn" id="cf-open-data">打开数据目录</button>
@@ -405,6 +412,9 @@ async function loadConfigForm() {
   $('#cf-code').value = cfg.bootstrapCode ?? ''
   $('#cf-vpub').value = cfg.vapidPublicKey ?? ''
   $('#cf-vpriv').value = cfg.vapidPrivateKey ?? ''
+  $('#cf-ai-url').value = cfg.aiBaseUrl ?? ''
+  $('#cf-ai-key').value = cfg.aiApiKey ?? ''
+  $('#cf-ai-model').value = cfg.aiModel ?? ''
 }
 $('#cf-save').addEventListener('click', async (e) => {
   e.target.disabled = true
@@ -414,6 +424,9 @@ $('#cf-save').addEventListener('click', async (e) => {
     bootstrapCode: $('#cf-code').value.trim(),
     vapidPublicKey: $('#cf-vpub').value.trim(),
     vapidPrivateKey: $('#cf-vpriv').value.trim(),
+    aiBaseUrl: $('#cf-ai-url').value.trim(),
+    aiApiKey: $('#cf-ai-key').value.trim(),
+    aiModel: $('#cf-ai-model').value.trim(),
   })
   e.target.disabled = false
   e.target.textContent = '已保存 ✓'
